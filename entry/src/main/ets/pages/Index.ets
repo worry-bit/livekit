@@ -24,8 +24,12 @@ struct Index {
           console.info('[Index] XComponent loaded, surfaceId:', this.surfaceId)
         })
         .onDestroy(() => {
+          if (this.isVideoPublished) {
+            liveKitUtil.unpublishVideo()
+          }
           this.xComponentReady = false
           this.surfaceId = ''
+          this.isVideoPublished = false
         })
 
       // 连接控制行

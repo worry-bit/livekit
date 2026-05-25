@@ -201,7 +201,8 @@ export class LiveKitClient implements RTCEngineDelegate {
     this._localParticipant = null
     this._remoteParticipants.clear()
     this.isAudioPublished = false
-    
+    this.isVideoPublished = false
+
     this.emit('disconnected', { type: 'disconnected' })
     console.info('[LiveKitClient] Disconnected')
   }

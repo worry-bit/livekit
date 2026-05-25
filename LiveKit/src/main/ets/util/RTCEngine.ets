@@ -61,6 +61,7 @@ export class RTCEngine {
 
   // 协商锁，防止并发协商
   private isNegotiating: boolean = false
+  private negotiationPending: boolean = false
 
   // 缓存在 subscriberPC 就绪前收到的 offer
   private pendingOffer: SessionDescription | null = null
@@ -272,6 +273,7 @@ export class RTCEngine {
 
     } catch (error) {
       console.error('[RTCEngine] Publish video failed:', error)
+      throw error
     }
   }
 
@@ -348,7 +350,7 @@ export class RTCEngine {
 
     // 停止视频
     if (this.videoCapture) {
-      this.videoCapture.stopCapture()
+      await this.videoCapture.stopCapture()
       this.videoCapture = null
     }
     if (this.localRenderer && this.videoSource) {
@@ -494,9 +496,10 @@ export class RTCEngine {
       return
     }
 
-    // 防止并发协商
+    // 防止并发协商：记录 pending，等当前协商完成后再触发一次
     if (this.isNegotiating) {
-      console.info('[RTCEngine] Negotiation already in progress, skipping')
+      console.info('[RTCEngine] Negotiation already in progress, will retry after current completes')
+      this.negotiationPending = true
       return
     }
 
@@ -530,6 +533,11 @@ export class RTCEngine {
       console.error('[RTCEngine] Negotiate error:', error)
     } finally {
       this.isNegotiating = false
+      if (this.negotiationPending) {
+        this.negotiationPending = false
+        console.info('[RTCEngine] Retrying pending negotiation')
+        await this.negotiate()
+      }
     }
   }
 

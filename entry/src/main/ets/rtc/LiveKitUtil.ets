@@ -118,7 +118,7 @@ class LiveKitUtil {
         this.context,
         ['ohos.permission.MICROPHONE', 'ohos.permission.CAMERA']
       )
-      if (result.authResults[0] !== 0) {
+      if (result.authResults[0] !== 0 || result.authResults[1] !== 0) {
         this.errorMessage = '需要麦克风和摄像头权限才能进行视频通话'
       }
     } catch (error) {
