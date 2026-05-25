@@ -55,6 +55,17 @@
           "when": "always"
           // 始终需要该权限
         }
+      },
+      // 访问摄像头的权限
+      {
+        "name": "ohos.permission.CAMERA",
+        "reason": "$string:permission_camera_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
       }],
     "extensionAbilities": [
       {

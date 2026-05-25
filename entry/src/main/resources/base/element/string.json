@@ -19,6 +19,10 @@
     {
       "name": "Audio_reason",
       "value": "需要录制音频"
+    },
+    {
+      "name": "permission_camera_reason",
+      "value": "需要使用摄像头进行视频通话"
     }
   ]
 }
