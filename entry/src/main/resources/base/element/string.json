@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "module description"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "description"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "label"
+    },
+    {
+      "name": "Internet_reason",
+      "value": "访问用户网络"
+    },
+    {
+      "name": "Audio_reason",
+      "value": "需要录制音频"
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+# HarmonyOS 项目构建产物
+build/
+.hvigor/
+*.hap
+*.har
+*.hsp
+
+# 依赖目录
+oh_modules/
+node_modules/
+
+# IDE 配置
+.idea/
+.vscode/
+*.iml
+
+# 日志文件
+*.log
+logs/
+
+# 临时文件
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# 测试覆盖率
+coverage/
+
+# 打包文件
+*.zip
+*.tar
+*.tar.gz
+
+# 敏感信息（如果有）
+*.key
+*.p12
+*.jks
+
+# 其他
+.npm/
+.yarn/

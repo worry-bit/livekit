@@ -1,0 +1,23 @@
+{
+  "name": "livekit-harmony",
+  "version": "1.0.0",
+  "description": "基于 @ohos/webrtc 的 HarmonyOS 实时音频通信客户端，支持多人语音通话、音频电平检测、回声消除等功能",
+  "main": "Index.ets",
+  "author": "paitasuo",
+  "license": "Apache-2.0",
+  "repository": "https://gitee.com/sudp/LiveKitDemo.git",
+  "homepage": "https://github.com/sudp/LiveKitDemo/tree/main/LiveKit#readme",
+  "bugs": "https://github.com/sudp/LiveKitDemo/issues",
+  "keywords": [
+    "harmonyos",
+    "livekit",
+    "webrtc",
+    "audio",
+    "realtime",
+    "rtc"
+  ],
+  "dependencies": {
+    "@ohos/webrtc": "^1.0.0",
+    "protobufjs": "^7.2.4"
+  }
+}
