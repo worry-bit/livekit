@@ -1,5 +1,5 @@
 // import { createLiveKitClient, LiveKitClient } from "../../livekit/LiveKitClient"
-import { AudioLevelInfo, createLiveKitClient, LiveKitClient } from "livekit-harmony"
+import { AudioLevelInfo, VideoCaptureOptions, createLiveKitClient, LiveKitClient } from "livekit-harmony"
 import { abilityAccessCtrl, common } from "@kit.AbilityKit"
 import { AppStorageV2 } from "@kit.ArkUI"
 import { RtcModel, SpeakerModel } from "./RtcModel"
@@ -11,6 +11,8 @@ class LiveKitUtil {
   remoteSpeakers: string[] = []
   errorMessage: string = ''
   participantCount: number = 0
+  isVideoPublished: boolean = false
+  localVideoSurfaceId: string = ''
   // LiveKit 客户端
   private client: LiveKitClient = createLiveKitClient()
   // 上下文
@@ -70,6 +72,43 @@ class LiveKitUtil {
   }
 
   /**
+   * 发布本地摄像头视频
+   * @param surfaceId 来自 XComponent.onLoad，必须非空
+   */
+  async publishVideo(surfaceId: string): Promise<void> {
+    if (!surfaceId) {
+      console.warn('[LiveKitUtil] publishVideo called with empty surfaceId')
+      return
+    }
+    this.localVideoSurfaceId = surfaceId
+    try {
+      await this.client.publishVideo(surfaceId)
+      this.isVideoPublished = true
+    } catch (error) {
+      console.error('[LiveKitUtil] publishVideo failed:', error)
+    }
+  }
+
+  /**
+   * 取消发布视频
+   */
+  async unpublishVideo(): Promise<void> {
+    try {
+      await this.client.unpublishVideo()
+      this.isVideoPublished = false
+    } catch (error) {
+      console.error('[LiveKitUtil] unpublishVideo failed:', error)
+    }
+  }
+
+  /**
+   * 切换前/后摄像头
+   */
+  switchCamera(): void {
+    this.client.switchCamera()
+  }
+
+  /**
    * 请求麦克风权限
    */
    async requestPermissions(): Promise<void> {
@@ -77,10 +116,10 @@ class LiveKitUtil {
     try {
       const result = await atManager.requestPermissionsFromUser(
         this.context,
-        ['ohos.permission.MICROPHONE']
+        ['ohos.permission.MICROPHONE', 'ohos.permission.CAMERA']
       )
       if (result.authResults[0] !== 0) {
-        this.errorMessage = '需要麦克风权限才能进行语音通话'
+        this.errorMessage = '需要麦克风和摄像头权限才能进行视频通话'
       }
     } catch (error) {
       console.error('请求权限失败:', error)
