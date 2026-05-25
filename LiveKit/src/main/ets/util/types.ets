@@ -340,3 +340,12 @@ export interface AudioFrame {
   numChannels: number
   samplesPerChannel: number
 }
+
+// ==================== 视频采集选项 ====================
+
+export interface VideoCaptureOptions {
+  width?: number      // 采集宽度，默认 1280
+  height?: number     // 采集高度，默认 720
+  frameRate?: number  // 帧率，默认 30
+  facingMode?: 'user' | 'environment'  // 前置/后置，默认 'environment'
+}

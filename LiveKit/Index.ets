@@ -19,6 +19,7 @@ export {
   RoomInfo,
   ConnectOptions,
   AudioCaptureOptions,
+  VideoCaptureOptions,
   ConnectionQuality,
   DisconnectReason,
   SpeakerInfo
