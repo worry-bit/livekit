@@ -16,6 +16,7 @@ import {
   ParticipantInfo,
   ConnectOptions,
   AudioCaptureOptions,
+  VideoCaptureOptions,
   RoomEventType,
   AudioLevelInfo,
   AudioLevelCallback,
@@ -46,6 +47,9 @@ export class LiveKitClient implements RTCEngineDelegate {
   // 音频状态
   private isAudioPublished: boolean = false
   private isMuted: boolean = false
+
+  // 视频状态
+  private isVideoPublished: boolean = false
 
   // 音频电平观察
   private audioLevelTimer: number | null = null
@@ -172,14 +176,19 @@ export class LiveKitClient implements RTCEngineDelegate {
       if (this.isAudioPublished) {
         await this.unpublishAudio()
       }
-      
-      // 2. 发送离开信令
+
+      // 2. 取消发布视频
+      if (this.isVideoPublished) {
+        await this.unpublishVideo()
+      }
+
+      // 3. 发送离开信令
       this.signalClient.sendLeave()
-      
-      // 3. 关闭 RTC 引擎
+
+      // 4. 关闭 RTC 引擎
       await this.rtcEngine.close()
-      
-      // 4. 关闭信令连接
+
+      // 5. 关闭信令连接
       this.signalClient.close()
       
     } catch (error) {
@@ -234,14 +243,68 @@ export class LiveKitClient implements RTCEngineDelegate {
     try {
       await this.rtcEngine.unpublishAudio()
       this.isAudioPublished = false
-      
+
       console.info('[LiveKitClient] Audio unpublished')
       this.emit('trackUnpublished', { kind: 'audio' })
-      
+
     } catch (error) {
       console.error('[LiveKitClient] Unpublish audio failed:', error)
       // throw error
     }
+  }
+
+  /**
+   * 发布本地摄像头视频
+   * @param surfaceId 来自 XComponent.onLoad 的 surfaceId，用于本地预览
+   * @param options 采集参数（可选）
+   */
+  async publishVideo(surfaceId: string, options?: VideoCaptureOptions): Promise<void> {
+    if (!this.isConnected) {
+      throw new Error('Not connected to room')
+    }
+
+    if (this.isVideoPublished) {
+      console.warn('[LiveKitClient] Video already published')
+      return
+    }
+
+    try {
+      await this.rtcEngine.publishVideo(surfaceId, options)
+      this.isVideoPublished = true
+
+      console.info('[LiveKitClient] Video published')
+      this.emit('trackPublished', { kind: 'video' })
+
+    } catch (error) {
+      console.error('[LiveKitClient] Publish video failed:', error)
+    }
+  }
+
+  /**
+   * 取消发布本地视频
+   */
+  async unpublishVideo(): Promise<void> {
+    if (!this.isVideoPublished) {
+      return
+    }
+
+    try {
+      await this.rtcEngine.unpublishVideo()
+      this.isVideoPublished = false
+
+      console.info('[LiveKitClient] Video unpublished')
+      this.emit('trackUnpublished', { kind: 'video' })
+
+    } catch (error) {
+      console.error('[LiveKitClient] Unpublish video failed:', error)
+    }
+  }
+
+  /**
+   * 切换前/后摄像头
+   */
+  switchCamera(): void {
+    this.rtcEngine.switchCamera()
   }
 
   /**
