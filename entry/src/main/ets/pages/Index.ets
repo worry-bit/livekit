@@ -68,8 +68,8 @@ struct Index {
 
         Button('切换摄像头')
           .enabled(this.isVideoPublished)
-          .onClick(() => {
-            liveKitUtil.switchCamera()
+          .onClick(async () => {
+            await liveKitUtil.switchCamera()
           })
       }
       .padding({ top: 12 })

@@ -72,8 +72,8 @@ export class RTCEngine {
   // 本地视频
   private videoSource: webrtc.VideoSource | null = null
   private videoTrack: webrtc.VideoTrack | null = null
-  private videoCapture: webrtc.VideoCapture | null = null
   private localRenderer: webrtc.NativeVideoRenderer | null = null
+  private currentFacingMode: string = 'environment'
 
   constructor(signalClient: SignalClient) {
     this.signalClient = signalClient
@@ -238,42 +238,39 @@ export class RTCEngine {
       const height = options?.height ?? 720
       const frameRate = options?.frameRate ?? 30
       const facingMode = options?.facingMode ?? 'environment'
+      this.currentFacingMode = facingMode
 
       // 1. 通知服务器即将发布视频轨道（TrackType.VIDEO=1, TrackSource.CAMERA=1）
       const trackId = `video_${Date.now()}`
       this.signalClient.sendAddTrack(trackId, 'video', 1, 1)
       console.info('[RTCEngine] Sent AddTrackRequest for video:', trackId)
 
-      // 2. 创建 VideoSource（非屏幕录制）
-      this.videoSource = this.peerConnectionFactory.createVideoSource(false)
-
-      // 3. 创建 VideoTrack
-      this.videoTrack = this.peerConnectionFactory.createVideoTrack(trackId, this.videoSource)
-
-      // 4. 创建 VideoCapture 并开始采集
-      this.videoCapture = new webrtc.VideoCapture(this.videoSource)
+      // 2. 创建 VideoSource，传入采集约束（含摄像头方向），内部自动开始采集
       const constraints: webrtc.MediaTrackConstraints = {
         width: width,
         height: height,
         frameRate: frameRate,
         facingMode: facingMode
       }
-      await this.videoCapture.startCapture(constraints)
-      console.info('[RTCEngine] VideoCapture started')
+      this.videoSource = this.peerConnectionFactory.createVideoSource(constraints, false)
+      console.info('[RTCEngine] VideoSource created, capturing started')
 
-      // 5. 创建本地渲染器，将摄像头画面渲染到 XComponent
+      // 3. 创建 VideoTrack
+      this.videoTrack = this.peerConnectionFactory.createVideoTrack(trackId, this.videoSource)
+
+      // 4. 创建本地渲染器并绑定到 XComponent surfaceId
       this.localRenderer = new webrtc.NativeVideoRenderer()
       this.localRenderer.init(surfaceId)
-      this.videoSource.addSink(this.localRenderer)
+      this.localRenderer.setVideoTrack(this.videoTrack)
       console.info('[RTCEngine] NativeVideoRenderer initialized for surfaceId:', surfaceId)
 
-      // 6. 将视频轨道添加到发布者 PeerConnection，触发 onnegotiationneeded
+      // 5. 将视频轨道添加到发布者 PeerConnection，触发 onnegotiationneeded
       this.publisherPC.addTrack(this.videoTrack)
       console.info('[RTCEngine] Video track added:', trackId)
 
     } catch (error) {
       console.error('[RTCEngine] Publish video failed:', error)
-      throw error
+      throw new Error(String(error))
     }
   }
 
@@ -286,32 +283,36 @@ export class RTCEngine {
     }
 
     try {
-      // 1. 停止摄像头采集
-      if (this.videoCapture) {
-        await this.videoCapture.stopCapture()
-        this.videoCapture = null
-        console.info('[RTCEngine] VideoCapture stopped')
-      }
-
-      // 2. 释放本地渲染器（必须在 removeTrack 之前）
-      if (this.localRenderer && this.videoSource) {
-        this.videoSource.removeSink(this.localRenderer)
+      // 1. 解除渲染器与视频轨道的绑定，释放渲染器（必须在 removeTrack 之前）
+      if (this.localRenderer) {
+        this.localRenderer.setVideoTrack(null)
         this.localRenderer.release()
         this.localRenderer = null
         console.info('[RTCEngine] NativeVideoRenderer released')
       }
 
+      // 2. 停止视频轨道，释放摄像头采集资源
+      if (this.videoTrack) {
+        this.videoTrack.stop()
+      }
+      if (this.videoSource) {
+        this.videoSource.release()
+        this.videoSource = null
+        console.info('[RTCEngine] VideoSource released')
+      }
+
       // 3. 从 PeerConnection 移除视频轨道（触发重新协商）
-      const senders = this.publisherPC.getSenders()
-      for (let i = 0; i < senders.length; i++) {
-        if (senders[i].track === this.videoTrack) {
-          this.publisherPC.removeTrack(senders[i])
-          break
+      if (this.publisherPC && this.videoTrack) {
+        const senders = this.publisherPC.getSenders()
+        for (let i = 0; i < senders.length; i++) {
+          if (senders[i].track === this.videoTrack) {
+            this.publisherPC.removeTrack(senders[i])
+            break
+          }
         }
       }
 
       this.videoTrack = null
-      this.videoSource = null
       console.info('[RTCEngine] Video unpublished')
 
     } catch (error) {
@@ -320,15 +321,61 @@ export class RTCEngine {
   }
 
   /**
-   * 切换前/后摄像头（仅在视频发布中有效）
+   * 切换前/后摄像头：重建 VideoSource（新 facingMode）+ replaceTrack
    */
-  switchCamera(): void {
-    if (!this.videoCapture) {
-      console.warn('[RTCEngine] switchCamera called but no active VideoCapture')
+  async switchCamera(): Promise<void> {
+    if (!this.publisherPC || !this.peerConnectionFactory || !this.videoTrack) {
+      console.warn('[RTCEngine] switchCamera called but video not published')
       return
     }
-    this.videoCapture.switchCamera()
-    console.info('[RTCEngine] Camera switched')
+
+    const newFacingMode = this.currentFacingMode === 'environment' ? 'user' : 'environment'
+    const prevVideoSource = this.videoSource
+    const prevVideoTrack = this.videoTrack
+
+    try {
+      // 找到当前视频发送器
+      const senders = this.publisherPC.getSenders()
+      let videoSender: webrtc.RTCRtpSender | null = null
+      for (let i = 0; i < senders.length; i++) {
+        if (senders[i].track && senders[i].track!.kind === 'video') {
+          videoSender = senders[i]
+          break
+        }
+      }
+      if (!videoSender) {
+        console.error('[RTCEngine] switchCamera: video sender not found')
+        return
+      }
+
+      // 创建新 VideoSource（新方向）
+      const newVideoSource = this.peerConnectionFactory.createVideoSource(
+        { facingMode: newFacingMode }, false
+      )
+      const newTrackId = `video_${Date.now()}`
+      const newVideoTrack = this.peerConnectionFactory.createVideoTrack(newTrackId, newVideoSource)
+
+      // 替换发送器中的轨道（不触发重新协商）
+      await videoSender.replaceTrack(newVideoTrack)
+
+      // 更新渲染器绑定
+      if (this.localRenderer) {
+        this.localRenderer.setVideoTrack(newVideoTrack)
+      }
+
+      // 更新成员变量
+      this.videoSource = newVideoSource
+      this.videoTrack = newVideoTrack
+      this.currentFacingMode = newFacingMode
+
+      // 释放旧资源
+      prevVideoTrack.stop()
+      prevVideoSource?.release()
+
+      console.info('[RTCEngine] Camera switched to:', newFacingMode)
+    } catch (error) {
+      console.error('[RTCEngine] switchCamera failed:', error)
+    }
   }
 
   /**
@@ -349,19 +396,19 @@ export class RTCEngine {
     this.stopDeviceChangeListener()
 
     // 停止视频
-    if (this.videoCapture) {
-      await this.videoCapture.stopCapture()
-      this.videoCapture = null
-    }
-    if (this.localRenderer && this.videoSource) {
-      this.videoSource.removeSink(this.localRenderer)
+    if (this.localRenderer) {
+      this.localRenderer.setVideoTrack(null)
       this.localRenderer.release()
       this.localRenderer = null
     }
     if (this.videoTrack) {
+      this.videoTrack.stop()
       this.videoTrack = null
     }
-    this.videoSource = null
+    if (this.videoSource) {
+      this.videoSource.release()
+      this.videoSource = null
+    }
 
     // 停止音频
     if (this.audioTrack) {

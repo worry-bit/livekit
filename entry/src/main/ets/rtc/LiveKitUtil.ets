@@ -104,8 +104,8 @@ class LiveKitUtil {
   /**
    * 切换前/后摄像头
    */
-  switchCamera(): void {
-    this.client.switchCamera()
+  async switchCamera(): Promise<void> {
+    await this.client.switchCamera()
   }
 
   /**

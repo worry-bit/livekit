@@ -304,8 +304,8 @@ export class LiveKitClient implements RTCEngineDelegate {
   /**
    * 切换前/后摄像头
    */
-  switchCamera(): void {
-    this.rtcEngine.switchCamera()
+  async switchCamera(): Promise<void> {
+    await this.rtcEngine.switchCamera()
   }
 
   /**
