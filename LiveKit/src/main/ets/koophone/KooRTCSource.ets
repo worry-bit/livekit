@@ -26,16 +26,23 @@ export class KooRTCSource {
 
     this.pcf = new webrtc.PeerConnectionFactory()
 
-    const rtcIceServers: webrtc.RTCIceServer[] = iceServers.map(s => ({
-      urls: [s.uri],
-      username: s.usr ?? '',
-      credential: s.pwd ?? ''
-    }))
+    // 显式构造每一个 RTCIceServer 对象，避免对象字面量类型推断错误
+    const rtcIceServers: webrtc.RTCIceServer[] = []
+    for (let i = 0; i < iceServers.length; i++) {
+      const s = iceServers[i]
+      const server: webrtc.RTCIceServer = {
+        urls: [s.uri],
+        username: s.usr ?? '',
+        credential: s.pwd ?? ''
+      }
+      rtcIceServers.push(server)
+    }
+
+    const fallback: webrtc.RTCIceServer = { urls: ['stun:stun.l.google.com:19302'] }
+    const servers: webrtc.RTCIceServer[] = rtcIceServers.length > 0 ? rtcIceServers : [fallback]
 
     const config: webrtc.RTCConfiguration = {
-      iceServers: rtcIceServers.length > 0 ? rtcIceServers : [
-        { urls: ['stun:stun.l.google.com:19302'] }
-      ]
+      iceServers: servers
     }
 
     this.pc = this.pcf.createPeerConnection(config)
@@ -169,9 +176,16 @@ export class KooRTCSource {
     }
 
     try {
-      const answer = await this.pc.createAnswer()
-      await this.pc.setLocalDescription(answer)
+      // pc.createAnswer() 返回 RTCSessionDescriptionInit，需转为 RTCSessionDescription
+      const answerInit = await this.pc.createAnswer()
+      await this.pc.setLocalDescription(answerInit)
       console.info('[KooRTCSource] Answer created and local description set')
+
+      // 构造完整的 RTCSessionDescription 传给回调
+      const answer: webrtc.RTCSessionDescription = {
+        type: answerInit.type as 'answer',
+        sdp: answerInit.sdp ?? ''
+      }
       this.onDescription?.(answer)
     } catch (e) {
       console.error('[KooRTCSource] createAnswer failed:', String(e))

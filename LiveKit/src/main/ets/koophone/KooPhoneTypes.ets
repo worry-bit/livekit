@@ -42,7 +42,7 @@ export enum KooPhoneError {
 export interface KooSignalMessage {
   type: string       // 'offer' | 'answer' | 'candidate'
   from: string
-  payload?: ESObject
+  payload?: Record<string, Object>
   data?: string      // base64 编码（init 响应用）
 }
 

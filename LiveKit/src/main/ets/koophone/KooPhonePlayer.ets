@@ -29,6 +29,12 @@ interface CandidatePayload {
   candidate: string
 }
 
+// offer/answer SDP payload 结构
+interface SdpPayload {
+  type: string
+  sdp: string
+}
+
 export class KooPhonePlayer {
   private _state: KooPhoneState = KooPhoneState.NEW
   private params: KooPhoneParams | null = null
@@ -139,18 +145,21 @@ export class KooPhonePlayer {
     this.rtcSource.onDescription = (desc: webrtc.RTCSessionDescription) => {
       // answer 创建完成，通过信令发送给 boxrtc
       console.info('[KooPhonePlayer] Sending answer')
-      const payload: ESObject = { type: desc.type, sdp: desc.sdp }
+      const payload: Record<string, Object> = {
+        type: desc.type,
+        sdp: desc.sdp
+      }
       this.signalClient.emitMessage('answer', this.remoteId, payload)
     }
 
     this.rtcSource.onIceCandidate = (candidate: webrtc.RTCIceCandidate) => {
       // 发送本地 ICE candidate（与 H5 _onLocalIceCandidate 格式一致）
-      const payload: CandidatePayload = {
-        label: candidate.sdpMLineIndex ?? null,
-        id: candidate.sdpMid ?? null,
+      const payload: Record<string, Object> = {
+        label: candidate.sdpMLineIndex ?? 0,
+        id: candidate.sdpMid ?? '',
         candidate: candidate.candidate
       }
-      this.signalClient.emitMessage('candidate', this.remoteId, payload as ESObject)
+      this.signalClient.emitMessage('candidate', this.remoteId, payload)
     }
 
     this.rtcSource.onConnectionStateChange = (state: webrtc.RTCPeerConnectionState) => {
@@ -200,18 +209,34 @@ export class KooPhonePlayer {
 
     if (type === 'offer') {
       console.info('[KooPhonePlayer] Received offer')
-      const payload = message.payload as ESObject
+      // payload 已是 Record<string, Object>，用具体接口提取字段
+      const raw = message.payload
+      if (!raw) {
+        return
+      }
+      const sdpPayload: SdpPayload = {
+        type: raw['type'] as string,
+        sdp: raw['sdp'] as string
+      }
       const sdp: webrtc.RTCSessionDescription = {
-        type: payload['type'] as 'offer',
-        sdp: payload['sdp'] as string
+        type: sdpPayload.type as 'offer',
+        sdp: sdpPayload.sdp
       }
       this.rtcSource.setRemoteDescription(sdp)
     } else if (type === 'candidate') {
-      const payload = message.payload as ESObject
+      const raw = message.payload
+      if (!raw) {
+        return
+      }
+      const candidatePayload: CandidatePayload = {
+        label: raw['label'] as number,
+        id: raw['id'] as string,
+        candidate: raw['candidate'] as string
+      }
       const candidateInit: webrtc.RTCIceCandidateInit = {
-        candidate: payload['candidate'] as string,
-        sdpMLineIndex: payload['label'] as number,
-        sdpMid: payload['id'] as string
+        candidate: candidatePayload.candidate,
+        sdpMLineIndex: candidatePayload.label ?? 0,
+        sdpMid: candidatePayload.id ?? ''
       }
       this.rtcSource.addRemoteIceCandidate(candidateInit)
     }

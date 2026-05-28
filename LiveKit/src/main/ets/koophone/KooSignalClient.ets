@@ -11,6 +11,12 @@ interface HandshakeJson {
   pingTimeout: number
 }
 
+// Socket.IO 事件帧结构：42["eventName", payload]
+interface SocketEventFrame {
+  eventName: string
+  payload: Record<string, Object>
+}
+
 export class KooSignalClient {
   private ws: webSocket.WebSocket | null = null
   private heartbeatTimer: number | null = null
@@ -94,7 +100,7 @@ export class KooSignalClient {
   /**
    * 发送 message 类型消息（用于 answer/candidate）
    */
-  emitMessage(type: string, to: string, payload: ESObject): void {
+  emitMessage(type: string, to: string, payload: Record<string, Object>): void {
     const msg = JSON.stringify({ to, type, payload })
     this.sendFrame(`42["message",${msg}]`)
   }
@@ -149,24 +155,41 @@ export class KooSignalClient {
 
   private handleEvent(jsonStr: string): void {
     try {
-      const arr = JSON.parse(jsonStr) as ESObject[]
-      const eventName = arr[0] as string
-      const payload = arr[1] as ESObject
+      // 解析为 [eventName, payload] 数组，用 Object[] 避免 ESObject/any
+      const arr = JSON.parse(jsonStr) as Object[]
+      if (arr.length < 2) {
+        return
+      }
+      const frame: SocketEventFrame = {
+        eventName: arr[0] as string,
+        payload: arr[1] as Record<string, Object>
+      }
 
-      console.info('[KooSignalClient] Event:', eventName)
+      console.info('[KooSignalClient] Event:', frame.eventName)
 
-      if (eventName === 'authorize') {
-        const auth = payload as KooAuthorizePayload
+      if (frame.eventName === 'authorize') {
+        const auth: KooAuthorizePayload = {
+          authorized: frame.payload['authorized'] as boolean,
+          code: frame.payload['code'] as number
+        }
         console.info('[KooSignalClient] Authorize result:', auth.authorized)
         this.onAuthorize?.(auth.authorized === true)
-      } else if (eventName === 'start') {
-        const startPayload = payload as KooStartPayload
+      } else if (frame.eventName === 'start') {
+        const startPayload: KooStartPayload = {
+          streamId: frame.payload['streamId'] as string,
+          vcodec: frame.payload['vcodec'] as string | undefined
+        }
         console.info('[KooSignalClient] Start, streamId:', startPayload.streamId)
         this.onStart?.(startPayload)
-      } else if (eventName === 'message') {
-        const msg = payload as KooSignalMessage
+      } else if (frame.eventName === 'message') {
+        const msg: KooSignalMessage = {
+          type: frame.payload['type'] as string,
+          from: frame.payload['from'] as string,
+          payload: frame.payload['payload'] as Record<string, Object> | undefined,
+          data: frame.payload['data'] as string | undefined
+        }
         this.onMessage?.(msg)
-      } else if (eventName === 'close') {
+      } else if (frame.eventName === 'close') {
         console.info('[KooSignalClient] Server closed connection')
         this.onClosed?.()
       }
