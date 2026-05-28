@@ -1,230 +1,204 @@
-import { socket } from '@kit.NetworkKit'
-import { util } from '@kit.ArkTS'
-import { KooSignalMessage } from './KooPhoneTypes'
+import { webSocket } from '@kit.NetworkKit'
+import {
+  KooSignalMessage,
+  KooAuthorizePayload,
+  KooStartPayload
+} from './KooPhoneTypes'
+
+interface HandshakeJson {
+  sid: string
+  pingInterval: number
+  pingTimeout: number
+}
 
 export class KooSignalClient {
-  // Event callbacks - caller will set these
-  onConnected: (() => void) | null = null
+  private ws: webSocket.WebSocket | null = null
+  private heartbeatTimer: number | null = null
+  private _connected: boolean = false
+
+  // 事件回调
   onAuthorize: ((authorized: boolean) => void) | null = null
+  onStart: ((payload: KooStartPayload) => void) | null = null
   onMessage: ((message: KooSignalMessage) => void) | null = null
-  onStart: ((streamId: string, vcodec?: string) => void) | null = null
   onClosed: (() => void) | null = null
 
-  private wsSocket: socket.Socket | null = null
-  private pingInterval: number = 25000
-  private pingTimer: number | null = null
-  private sid: string = ''
+  get isConnected(): boolean {
+    return this._connected
+  }
 
-  // Connect to signaling server
-  // query format: "authtype=token&boxid=xxx&token=xxx"
+  /**
+   * 连接信令服务器
+   * @param url 信令服务器地址，如 wss://host:port
+   * @param query query 参数，如 authtype=token&boxid=xxx&token=xxx
+   */
   connect(url: string, query: string): void {
-    try {
-      // Construct Socket.IO v2 handshake URL
-      const fullUrl = `${url}/socket.io/?EIO=3&transport=websocket&${query}`
-
-      // Create WebSocket
-      this.wsSocket = socket.constructSocket()
-
-      // Set up event listeners
-      this.wsSocket.on('open', () => {
-        console.info('KooSignalClient: WebSocket opened')
-      })
-
-      this.wsSocket.on('message', (data: ESObject) => {
-        this.handleMessage(String(data))
-      })
-
-      this.wsSocket.on('close', () => {
-        console.info('KooSignalClient: WebSocket closed')
-        this.cleanup()
-        if (this.onClosed) {
-          this.onClosed()
-        }
-      })
-
-      this.wsSocket.on('error', (err: ESObject) => {
-        console.error('KooSignalClient: WebSocket error:', JSON.stringify(err))
-        this.cleanup()
-        throw new Error(String(err))
-      })
-
-      // Connect to server
-      this.wsSocket.connect(fullUrl)
-    } catch (e) {
-      throw new Error(String(e))
+    if (this.ws !== null) {
+      console.warn('[KooSignalClient] Already connected')
+      return
     }
-  }
 
-  // Handle incoming messages
-  private handleMessage(data: string): void {
-    try {
-      if (data.length === 0) {
+    // 拼接 Socket.IO v2 握手 URL
+    const separator = url.includes('?') ? '&' : '?'
+    const wsUrl = `${url}/socket.io/${separator}EIO=3&transport=websocket&${query}`
+    console.info('[KooSignalClient] Connecting:', wsUrl)
+
+    this.ws = webSocket.createWebSocket()
+
+    this.ws.on('open', (err: Error) => {
+      if (err) {
+        console.error('[KooSignalClient] WebSocket open error:', err?.message)
         return
       }
+      console.info('[KooSignalClient] WebSocket opened')
+    })
 
-      const prefix = data.charAt(0)
-
-      // Handshake response (Engine.IO)
-      if (prefix === '0') {
-        const handshakeJson = data.substring(1)
-        const handshake = JSON.parse(handshakeJson)
-        this.sid = handshake.sid
-        this.pingInterval = handshake.pingInterval || 25000
-        this.pingTimeout = handshake.pingTimeout || 60000
-
-        // Start heartbeat timer
-        this.startHeartbeat()
+    this.ws.on('message', (err: Error, data: string | ArrayBuffer) => {
+      if (err) {
+        console.error('[KooSignalClient] Message error:', err?.message)
         return
       }
-
-      // Socket.IO connect confirmation
-      if (data === '40') {
-        if (this.onConnected) {
-          this.onConnected()
-        }
+      if (typeof data !== 'string') {
         return
       }
+      this.handleFrame(data)
+    })
 
-      // Socket.IO event
-      if (prefix === '4' && data.length > 2 && data.charAt(1) === '2') {
-        const eventJson = data.substring(2)
-        const eventArray = JSON.parse(eventJson)
+    this.ws.on('close', (err: Error, result: webSocket.CloseResult) => {
+      console.info('[KooSignalClient] WebSocket closed, code:', result?.code)
+      this.stopHeartbeat()
+      this._connected = false
+      this.onClosed?.()
+    })
 
-        if (Array.isArray(eventArray) && eventArray.length >= 2) {
-          const eventName = eventArray[0] as string
-          const payload = eventArray[1] as ESObject
+    this.ws.on('error', (err: Error) => {
+      console.error('[KooSignalClient] WebSocket error:', err?.message)
+      this.stopHeartbeat()
+      this._connected = false
+    })
 
-          this.handleEvent(eventName, payload)
-        }
-        return
+    this.ws.connect(wsUrl, (err: Error, success: boolean) => {
+      if (!success || err) {
+        console.error('[KooSignalClient] Connect failed:', err?.message)
       }
-
-      // Ping from server
-      if (data === '2') {
-        // Reply with Pong
-        this.sendRaw('3')
-        return
-      }
-    } catch (e) {
-      console.error('KooSignalClient: Error handling message:', String(e))
-      throw new Error(String(e))
-    }
+    })
   }
 
-  // Handle Socket.IO events
-  private handleEvent(eventName: string, payload: ESObject): void {
-    try {
-      switch (eventName) {
-        case 'authorize':
-          if (this.onAuthorize) {
-            this.onAuthorize(payload.authorized === true)
-          }
-          break
-
-        case 'start':
-          if (this.onStart) {
-            this.onStart(payload.streamId, payload.vcodec)
-          }
-          break
-
-        case 'message':
-          if (this.onMessage) {
-            const message: KooSignalMessage = {
-              type: payload.type,
-              from: payload.from,
-              payload: payload.payload,
-              data: payload.data
-            }
-            this.onMessage(message)
-          }
-          break
-
-        case 'close':
-          if (this.onClosed) {
-            this.onClosed()
-          }
-          this.close()
-          break
-
-        default:
-          console.info('KooSignalClient: Unknown event:', eventName)
-      }
-    } catch (e) {
-      throw new Error(String(e))
-    }
-  }
-
-  // Start heartbeat timer
-  private startHeartbeat(): void {
-    try {
-      if (this.pingTimer) {
-        clearInterval(this.pingTimer)
-      }
-
-      this.pingTimer = setInterval(() => {
-        this.sendRaw('3')
-      }, this.pingInterval)
-    } catch (e) {
-      throw new Error(String(e))
-    }
-  }
-
-  // Send raw data over WebSocket
-  private sendRaw(data: string): void {
-    try {
-      if (this.wsSocket) {
-        this.wsSocket.send(data)
-      }
-    } catch (e) {
-      throw new Error(String(e))
-    }
-  }
-
-  // Send init request (type=data, data=base64 encoded JSON)
+  /**
+   * 发送 data 类型消息（用于 init 请求，data 为 base64 编码的 JSON）
+   */
   emitData(type: string, to: string, data: string): void {
-    try {
-      const message = `42["message",{"to":"${to}","type":"${type}","data":"${data}"}]`
-      this.sendRaw(message)
-    } catch (e) {
-      throw new Error(String(e))
-    }
+    const msg = JSON.stringify({ to, type, data })
+    this.sendFrame(`42["message",${msg}]`)
   }
 
-  // Send answer/candidate messages (type=message, payload=JSON object)
+  /**
+   * 发送 message 类型消息（用于 answer/candidate）
+   */
   emitMessage(type: string, to: string, payload: ESObject): void {
-    try {
-      const payloadStr = JSON.stringify(payload)
-      const message = `42["message",{"to":"${to}","type":"${type}","payload":${payloadStr}}]`
-      this.sendRaw(message)
-    } catch (e) {
-      throw new Error(String(e))
-    }
+    const msg = JSON.stringify({ to, type, payload })
+    this.sendFrame(`42["message",${msg}]`)
   }
 
-  // Close connection
+  /**
+   * 关闭连接，释放资源
+   */
   close(): void {
-    try {
-      this.cleanup()
-      if (this.wsSocket) {
-        this.wsSocket.close()
-        this.wsSocket = null
+    this.stopHeartbeat()
+    if (this.ws !== null) {
+      this.ws.off('open')
+      this.ws.off('message')
+      this.ws.off('close')
+      this.ws.off('error')
+      this.ws.close((err: Error) => {
+        if (err) {
+          console.error('[KooSignalClient] Close error:', err?.message)
+        }
+      })
+      this.ws = null
+    }
+    this._connected = false
+  }
+
+  // ==================== 私有方法 ====================
+
+  private handleFrame(data: string): void {
+    console.debug('[KooSignalClient] Frame received:', data.substring(0, 100))
+
+    if (data.startsWith('0')) {
+      // Handshake: 0{"sid":"...","pingInterval":25000,"pingTimeout":5000}
+      try {
+        const json = JSON.parse(data.slice(1)) as HandshakeJson
+        console.info('[KooSignalClient] Handshake, sid:', json.sid,
+          'pingInterval:', json.pingInterval)
+        this.startHeartbeat(json.pingInterval)
+      } catch (e) {
+        console.error('[KooSignalClient] Handshake parse error:', String(e))
       }
-    } catch (e) {
-      throw new Error(String(e))
+    } else if (data === '40') {
+      // Socket.IO namespace connected
+      console.info('[KooSignalClient] Socket.IO connected')
+      this._connected = true
+    } else if (data.startsWith('42')) {
+      // Event: 42["eventName", payload]
+      this.handleEvent(data.slice(2))
+    } else if (data === '2') {
+      // Ping from server → reply Pong
+      this.sendFrame('3')
     }
   }
 
-  // Cleanup resources
-  private cleanup(): void {
+  private handleEvent(jsonStr: string): void {
     try {
-      if (this.pingTimer) {
-        clearInterval(this.pingTimer)
-        this.pingTimer = null
+      const arr = JSON.parse(jsonStr) as ESObject[]
+      const eventName = arr[0] as string
+      const payload = arr[1] as ESObject
+
+      console.info('[KooSignalClient] Event:', eventName)
+
+      if (eventName === 'authorize') {
+        const auth = payload as KooAuthorizePayload
+        console.info('[KooSignalClient] Authorize result:', auth.authorized)
+        this.onAuthorize?.(auth.authorized === true)
+      } else if (eventName === 'start') {
+        const startPayload = payload as KooStartPayload
+        console.info('[KooSignalClient] Start, streamId:', startPayload.streamId)
+        this.onStart?.(startPayload)
+      } else if (eventName === 'message') {
+        const msg = payload as KooSignalMessage
+        this.onMessage?.(msg)
+      } else if (eventName === 'close') {
+        console.info('[KooSignalClient] Server closed connection')
+        this.onClosed?.()
       }
     } catch (e) {
-      throw new Error(String(e))
+      console.error('[KooSignalClient] Event parse error:', String(e))
     }
   }
 
-  private pingTimeout: number = 60000
+  private sendFrame(frame: string): void {
+    if (this.ws === null) {
+      console.warn('[KooSignalClient] Cannot send, ws is null')
+      return
+    }
+    this.ws.send(frame, (err: Error, success: boolean) => {
+      if (!success) {
+        console.error('[KooSignalClient] Send failed:', err?.message)
+      }
+    })
+  }
+
+  private startHeartbeat(intervalMs: number): void {
+    this.stopHeartbeat()
+    this.heartbeatTimer = setInterval(() => {
+      this.sendFrame('3')
+    }, intervalMs) as number
+    console.info('[KooSignalClient] Heartbeat started, interval:', intervalMs, 'ms')
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer !== null) {
+      clearInterval(this.heartbeatTimer)
+      this.heartbeatTimer = null
+    }
+  }
 }

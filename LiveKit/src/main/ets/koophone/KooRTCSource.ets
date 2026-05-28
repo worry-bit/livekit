@@ -2,191 +2,195 @@ import webrtc from '@ohos/webrtc'
 import { KooIceServer } from './KooPhoneTypes'
 
 export class KooRTCSource {
-  // PeerConnection and factory
+  private pcf: webrtc.PeerConnectionFactory | null = null
   private pc: webrtc.RTCPeerConnection | null = null
-  private factory: webrtc.PeerConnectionFactory | null = null
-
-  // Video renderer
   private localRenderer: webrtc.NativeVideoRenderer | null = null
   private surfaceId: string = ''
+  private pendingCandidates: webrtc.RTCIceCandidateInit[] = []
+  private remoteDescSet: boolean = false
 
-  // ICE candidate cache for candidates arriving before remote description is set
-  private cachedCandidates: webrtc.RTCIceCandidateInit[] = []
-
-  // Event callbacks
+  // 事件回调
   onDescription: ((desc: webrtc.RTCSessionDescription) => void) | null = null
   onIceCandidate: ((candidate: webrtc.RTCIceCandidate) => void) | null = null
   onConnectionStateChange: ((state: webrtc.RTCPeerConnectionState) => void) | null = null
   onTrack: ((track: webrtc.MediaStreamTrack) => void) | null = null
 
-  // Create PeerConnection with ICE servers
+  /**
+   * 创建 PeerConnectionFactory 和 RTCPeerConnection
+   */
   open(iceServers: KooIceServer[]): void {
-    try {
-      // Create factory
-      this.factory = new webrtc.PeerConnectionFactory()
-
-      // Build config with ICE servers
-      const config: webrtc.RTCConfiguration = {
-        iceServers: iceServers.map((server) => ({
-          urls: server.uri,
-          username: server.usr || '',
-          credential: server.pwd || ''
-        }))
-      }
-
-      // Create PeerConnection
-      this.pc = this.factory.createPeerConnection(config)
-
-      // Set up event handlers
-      this.pc.onicecandidate = (event: webrtc.RTCIceCandidateEvent) => {
-        if (event.candidate && this.onIceCandidate) {
-          this.onIceCandidate(event.candidate)
-        }
-      }
-
-      this.pc.onconnectionstatechange = () => {
-        if (this.onConnectionStateChange && this.pc) {
-          this.onConnectionStateChange(this.pc.connectionState)
-        }
-      }
-
-      this.pc.ontrack = (event: webrtc.RTCTrackEvent) => {
-        if (event.track) {
-          // Set track to renderer if available
-          if (this.localRenderer) {
-            this.localRenderer.setVideoTrack(event.track)
-          }
-          // Notify listener
-          if (this.onTrack) {
-            this.onTrack(event.track)
-          }
-        }
-      }
-    } catch (e) {
-      throw new Error(String(e))
+    if (this.pc !== null) {
+      console.warn('[KooRTCSource] Already open')
+      return
     }
+
+    this.pcf = new webrtc.PeerConnectionFactory()
+
+    const rtcIceServers: webrtc.RTCIceServer[] = iceServers.map(s => ({
+      urls: [s.uri],
+      username: s.usr ?? '',
+      credential: s.pwd ?? ''
+    }))
+
+    const config: webrtc.RTCConfiguration = {
+      iceServers: rtcIceServers.length > 0 ? rtcIceServers : [
+        { urls: ['stun:stun.l.google.com:19302'] }
+      ]
+    }
+
+    this.pc = this.pcf.createPeerConnection(config)
+    this.setupPcEvents()
+
+    // 初始化本地渲染器（surfaceId 可能稍后通过 setSurfaceId 设置）
+    this.localRenderer = new webrtc.NativeVideoRenderer()
+
+    console.info('[KooRTCSource] PeerConnection created')
   }
 
-  // Set local preview surfaceId (for NativeVideoRenderer)
+  /**
+   * 设置 XComponent surfaceId 用于远端视频渲染
+   */
   setSurfaceId(surfaceId: string): void {
-    try {
-      this.surfaceId = surfaceId
-      this.localRenderer = new webrtc.NativeVideoRenderer()
+    this.surfaceId = surfaceId
+    if (this.localRenderer && surfaceId) {
       this.localRenderer.init(surfaceId)
-    } catch (e) {
-      throw new Error(String(e))
+      console.info('[KooRTCSource] NativeVideoRenderer initialized, surfaceId:', surfaceId)
     }
   }
 
-  // Handle incoming offer, automatically creates answer
+  /**
+   * 收到服务端 offer，设置 remote description 并自动创建 answer
+   */
   async setRemoteDescription(sdp: webrtc.RTCSessionDescription): Promise<void> {
-    try {
-      if (!this.pc) {
-        throw new Error('PeerConnection not initialized')
-      }
+    if (!this.pc) {
+      console.error('[KooRTCSource] pc is null')
+      return
+    }
 
+    try {
       await this.pc.setRemoteDescription(sdp)
+      this.remoteDescSet = true
+      console.info('[KooRTCSource] Remote description set, type:', sdp.type)
+
+      // 批量添加缓存的 candidates
+      await this.flushPendingCandidates()
 
       if (sdp.type === 'offer') {
-        const answer = await this.pc.createAnswer()
-        await this.pc.setLocalDescription(answer)
-        if (this.onDescription) {
-          this.onDescription(answer)
-        }
+        await this.createAnswer()
       }
-
-      // Process any cached candidates
-      await this.processCachedCandidates()
     } catch (e) {
-      throw new Error(String(e))
+      console.error('[KooRTCSource] setRemoteDescription failed:', String(e))
     }
   }
 
-  // Add remote ICE candidate (with retry if remoteDesc not ready)
+  /**
+   * 添加远端 ICE candidate（remoteDesc 未就绪时自动缓存）
+   */
   addRemoteIceCandidate(candidate: webrtc.RTCIceCandidateInit): void {
-    try {
-      if (!this.pc) {
-        throw new Error('PeerConnection not initialized')
-      }
-
-      // If remote description is not set yet, cache the candidate
-      if (!this.pc.remoteDescription) {
-        this.cachedCandidates.push(candidate)
-        return
-      }
-
-      // Add candidate directly
-      this.pc.addIceCandidate(candidate)
-    } catch (e) {
-      throw new Error(String(e))
+    if (!this.remoteDescSet) {
+      this.pendingCandidates.push(candidate)
+      console.debug('[KooRTCSource] Candidate cached, total pending:', this.pendingCandidates.length)
+      return
     }
+
+    this.pc?.addIceCandidate(candidate).then(() => {
+      console.debug('[KooRTCSource] Remote candidate added')
+    }).catch((e: Error) => {
+      console.error('[KooRTCSource] addIceCandidate failed:', e.message)
+    })
   }
 
-  // Process cached ICE candidates after remote description is set
-  private async processCachedCandidates(): Promise<void> {
-    const candidates = this.cachedCandidates
-    this.cachedCandidates = []
-
-    for (const candidate of candidates) {
-      let retries = 0
-      const maxRetries = 20
-      const retryDelay = 100
-
-      while (retries < maxRetries) {
-        try {
-          if (this.pc && this.pc.remoteDescription) {
-            this.pc.addIceCandidate(candidate)
-            break
-          } else {
-            retries++
-            await this.sleep(retryDelay)
-          }
-        } catch (e) {
-          retries++
-          if (retries >= maxRetries) {
-            throw new Error(String(e))
-          }
-          await this.sleep(retryDelay)
-        }
-      }
-    }
-  }
-
-  // Helper method for delay
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms))
-  }
-
-  // Close and release resources
+  /**
+   * 关闭并释放所有资源
+   * 顺序：renderer.setVideoTrack(null) → renderer.release() → pc.close()
+   */
   close(): void {
-    try {
-      // Set track to null
-      if (this.localRenderer) {
-        this.localRenderer.setVideoTrack(null)
-      }
-
-      // Release renderer
-      if (this.localRenderer) {
-        this.localRenderer.release()
-        this.localRenderer = null
-      }
-
-      // Close PeerConnection
-      if (this.pc) {
-        this.pc.close()
-        this.pc = null
-      }
-
-      // Release factory
-      if (this.factory) {
-        this.factory.release()
-        this.factory = null
-      }
-
-      // Clear cached candidates
-      this.cachedCandidates = []
-    } catch (e) {
-      throw new Error(String(e))
+    if (this.localRenderer) {
+      this.localRenderer.setVideoTrack(null)
+      this.localRenderer.release()
+      this.localRenderer = null
     }
+
+    if (this.pc) {
+      this.pc.close()
+      this.pc = null
+    }
+
+    this.pcf = null
+    this.remoteDescSet = false
+    this.pendingCandidates = []
+
+    console.info('[KooRTCSource] Closed')
+  }
+
+  // ==================== 私有方法 ====================
+
+  private setupPcEvents(): void {
+    if (!this.pc) {
+      return
+    }
+
+    this.pc.ontrack = (event: webrtc.RTCTrackEvent) => {
+      console.info('[KooRTCSource] Remote track received, kind:', event.track.kind)
+      if (event.track.kind === 'video') {
+        if (this.localRenderer && this.surfaceId) {
+          this.localRenderer.setVideoTrack(event.track)
+          console.info('[KooRTCSource] Video track set to renderer')
+        }
+        this.onTrack?.(event.track)
+      }
+    }
+
+    this.pc.onicecandidate = (event: webrtc.RTCPeerConnectionIceEvent) => {
+      if (event.candidate) {
+        console.debug('[KooRTCSource] Local ICE candidate gathered')
+        this.onIceCandidate?.(event.candidate)
+      }
+    }
+
+    this.pc.onconnectionstatechange = () => {
+      const state = this.pc?.connectionState ?? 'closed'
+      console.info('[KooRTCSource] Connection state:', state)
+      this.onConnectionStateChange?.(state as webrtc.RTCPeerConnectionState)
+    }
+
+    this.pc.onsignalingstatechange = () => {
+      console.debug('[KooRTCSource] Signaling state:', this.pc?.signalingState)
+    }
+
+    this.pc.oniceconnectionstatechange = () => {
+      console.debug('[KooRTCSource] ICE connection state:', this.pc?.iceConnectionState)
+    }
+  }
+
+  private async createAnswer(): Promise<void> {
+    if (!this.pc) {
+      return
+    }
+
+    try {
+      const answer = await this.pc.createAnswer()
+      await this.pc.setLocalDescription(answer)
+      console.info('[KooRTCSource] Answer created and local description set')
+      this.onDescription?.(answer)
+    } catch (e) {
+      console.error('[KooRTCSource] createAnswer failed:', String(e))
+    }
+  }
+
+  private async flushPendingCandidates(): Promise<void> {
+    if (this.pendingCandidates.length === 0 || !this.pc) {
+      return
+    }
+
+    console.info('[KooRTCSource] Flushing', this.pendingCandidates.length, 'pending candidates')
+    for (let i = 0; i < this.pendingCandidates.length; i++) {
+      try {
+        await this.pc.addIceCandidate(this.pendingCandidates[i])
+      } catch (e) {
+        console.error('[KooRTCSource] Flush candidate failed:', String(e))
+      }
+    }
+    this.pendingCandidates = []
   }
 }
