@@ -43,9 +43,18 @@ export class KooSignalClient {
       return
     }
 
-    // 拼接 Socket.IO v2 握手 URL
-    const separator = url.includes('?') ? '&' : '?'
-    const wsUrl = `${url}/socket.io/${separator}EIO=3&transport=websocket&${query}`
+    // 将 http/https scheme 转换为 ws/wss（socket.io-client 会自动转，原生 WebSocket 不会）
+    let baseUrl = url
+    if (baseUrl.startsWith('http://')) {
+      baseUrl = 'ws://' + baseUrl.slice('http://'.length)
+    } else if (baseUrl.startsWith('https://')) {
+      baseUrl = 'wss://' + baseUrl.slice('https://'.length)
+    }
+    // 去掉末尾斜杠，统一拼接
+    baseUrl = baseUrl.replace(/\/+$/, '')
+
+    // 拼接 Socket.IO v2 握手 URL：固定用 ? 分隔，/socket.io/ 路径后不含已有参数
+    const wsUrl = `${baseUrl}/socket.io/?EIO=3&transport=websocket&${query}`
     console.info('[KooSignalClient] Connecting:', wsUrl)
 
     this.ws = webSocket.createWebSocket()
