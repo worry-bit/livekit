@@ -113,6 +113,10 @@ export class KooPhonePlayer {
 
       console.info('[KooPhonePlayer] Authorized')
       this.stateChange(KooPhoneState.AUTHORIZED)
+
+      // AUTHORIZED 后客户端主动发 start 请求，服务端才会回调 start 事件返回 streamId
+      // 对应 H5 CloudPlayer._start() → connection.start({times:0})
+      this.signalClient.emitStart(0)
     }
 
     this.signalClient.onStart = (payload: KooStartPayload) => {

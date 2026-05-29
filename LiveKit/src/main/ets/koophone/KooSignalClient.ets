@@ -99,6 +99,16 @@ export class KooSignalClient {
   }
 
   /**
+   * 发送 start 请求（AUTHORIZED 后客户端主动触发，服务端回调 start 事件返回 streamId）
+   * @param times 重连次数，首次连接传 0
+   */
+  emitStart(times: number = 0): void {
+    const payload: Record<string, Object> = { times }
+    this.sendFrame(`42["start",${JSON.stringify(payload)}]`)
+    console.info('[KooSignalClient] Sent start, times:', times)
+  }
+
+  /**
    * 发送 data 类型消息（用于 init 请求，data 为 base64 编码的 JSON）
    */
   emitData(type: string, to: string, data: string): void {
