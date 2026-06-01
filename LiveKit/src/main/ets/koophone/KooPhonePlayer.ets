@@ -19,8 +19,18 @@ interface InitPayload {
   role: string
   profile_name: string
   network_type: string
+  profile: number
   volume: number
   vcodec: string
+  venctype: number
+  frame_aspect: string
+  keeping_time: number
+  user_agent: string
+  client_version: string
+  uuid: string
+  sessionid: string
+  streamingid: string
+  room_session: string
 }
 
 interface CandidatePayload {
@@ -40,6 +50,9 @@ export class KooPhonePlayer {
   private params: KooPhoneParams | null = null
   private remoteId: string = ''
   private vcodec: string = 'H264'
+  private streamingId: string = ''
+  private sessionId: string = ''
+  private uuid: string = ''
 
   private signalClient: KooSignalClient = new KooSignalClient()
   private rtcSource: KooRTCSource = new KooRTCSource()
@@ -70,12 +83,20 @@ export class KooPhonePlayer {
     }
 
     this.params = params
+    // 生成会话标识（对应 H5 _open() 中的 streamingid/sessionid/uuid）
+    this.streamingId = this.randomUuid()
+    this.sessionId = params.sessionId ?? params.token
+    this.uuid = params.uuid ?? this.randomUuid()
+
     this.setupSignalHandlers(surfaceId)
     this.setupRTCHandlers()
 
     this.stateChange(KooPhoneState.CONNECTING)
 
-    const query = `authtype=token&boxid=${params.boxId}&token=${params.token}`
+    // 对应 H5 _connect() opts.query 构建逻辑
+    let query = `authtype=token&boxid=${params.boxId}&token=${params.token}`
+    query += `&sessionid=${this.sessionId}`
+    query += `&streamingid=${this.streamingId}`
     this.signalClient.connect(params.signalingUrl, query)
 
     console.info('[KooPhonePlayer] Opening, boxId:', params.boxId)
@@ -95,6 +116,9 @@ export class KooPhonePlayer {
     this.signalClient.close()
 
     this.remoteId = ''
+    this.streamingId = ''
+    this.sessionId = ''
+    this.uuid = ''
     this.params = null
 
     this.stateChange(KooPhoneState.CLOSED)
@@ -193,8 +217,18 @@ export class KooPhonePlayer {
       role: this.params.role ?? 'master',
       profile_name: 'master',
       network_type: 'wifi',
+      profile: 2,
       volume: this.params.volume ?? 100,
-      vcodec: this.vcodec
+      vcodec: this.vcodec,
+      venctype: 0,
+      frame_aspect: '16:9',
+      keeping_time: 0,
+      user_agent: 'HarmonyOS',
+      client_version: 'harmony-sdk-1.0.0',
+      uuid: this.uuid,
+      sessionid: this.sessionId,
+      streamingid: this.streamingId,
+      room_session: ''
     }
 
     // base64 编码（与 H5 btoa(JSON.stringify(params)) 一致）
@@ -206,7 +240,8 @@ export class KooPhonePlayer {
     const encoded = base64Helper.encodeToStringSync(bytes)
     console.info('[KooPhonePlayer] Init payload base64:', encoded)
 
-    console.info('[KooPhonePlayer] Sending init, remoteId:', this.remoteId)
+    console.info('[KooPhonePlayer] Sending init, remoteId:', this.remoteId,
+      'uuid:', this.uuid, 'streamingId:', this.streamingId)
     this.signalClient.emitData('init', this.remoteId, encoded)
   }
 
@@ -296,6 +331,24 @@ export class KooPhonePlayer {
       }
     }
     return null
+  }
+
+  private randomUuid(): string {
+    // 生成 RFC 4122 v4 UUID（对应 H5 Utils.randomUuid()）
+    const hex = '0123456789abcdef'
+    let uuid = ''
+    for (let i = 0; i < 36; i++) {
+      if (i === 8 || i === 13 || i === 18 || i === 23) {
+        uuid += '-'
+      } else if (i === 14) {
+        uuid += '4'
+      } else if (i === 19) {
+        uuid += hex[(Math.random() * 4 | 0) + 8]
+      } else {
+        uuid += hex[Math.random() * 16 | 0]
+      }
+    }
+    return uuid
   }
 
   private stateChange(newState: KooPhoneState): void {

@@ -5,6 +5,8 @@ export interface KooPhoneParams {
   signalingUrl: string        // 信令服务器地址，如 wss://host:port
   boxId: string               // 设备 ID
   token: string               // 鉴权 token
+  uuid?: string               // 用户唯一标识（H5 required，不传则自动生成）
+  sessionId?: string          // 会话 ID（不传则使用 token）
   iceServers?: KooIceServer[] // ICE 服务器（可选）
   mode?: string               // 默认 'app'
   role?: string               // 默认 'master'
