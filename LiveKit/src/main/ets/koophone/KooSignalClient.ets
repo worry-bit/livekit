@@ -201,12 +201,17 @@ export class KooSignalClient {
         console.info('[KooSignalClient] Start, streamId:', startPayload.streamId)
         this.onStart?.(startPayload)
       } else if (frame.eventName === 'message') {
+        // 打印原始 payload 结构，便于排查 payload/data 字段
+        console.info('[KooSignalClient] Message payload keys:',
+          Object.keys(frame.payload).join(','))
         const msg: KooSignalMessage = {
           type: frame.payload['type'] as string,
           from: frame.payload['from'] as string,
           payload: frame.payload['payload'] as Record<string, Object> | undefined,
           data: frame.payload['data'] as string | undefined
         }
+        console.info('[KooSignalClient] Message type:', msg.type,
+          'hasPayload:', !!msg.payload, 'hasData:', !!msg.data)
         this.onMessage?.(msg)
       } else if (frame.eventName === 'close') {
         console.info('[KooSignalClient] Server closed connection')

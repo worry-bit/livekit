@@ -210,11 +210,32 @@ export class KooPhonePlayer {
 
   private handleSignalMessage(message: KooSignalMessage): void {
     const type = message.type
+    console.info('[KooPhonePlayer] Signal message type:', type,
+      'hasPayload:', !!message.payload, 'hasData:', !!message.data)
+
+    // 对应 H5 CloudPlayer._onRemoteMessage()：
+    // payload 优先取 message.payload，若为空则从 message.data（base64 JSON）解码
+    const raw = this.resolvePayload(message)
 
     if (type === 'offer') {
-      console.info('[KooPhonePlayer] Received offer')
-      // payload 已是 Record<string, Object>，用具体接口提取字段
-      const raw = message.payload
+      console.info('[KooPhonePlayer] Received offer, raw:', JSON.stringify(raw))
+      if (!raw) {
+        console.error('[KooPhonePlayer] offer payload is empty, drop')
+        return
+      }
+      const sdpPayload: SdpPayload = {
+        type: raw['type'] as string,
+        sdp: raw['sdp'] as string
+      }
+      console.info('[KooPhonePlayer] offer sdp type:', sdpPayload.type,
+        'sdp length:', sdpPayload.sdp?.length ?? 0)
+      const sdp: webrtc.RTCSessionDescription = {
+        type: sdpPayload.type as 'offer',
+        sdp: sdpPayload.sdp
+      }
+      this.rtcSource.setRemoteDescription(sdp)
+    } else if (type === 'answer') {
+      console.info('[KooPhonePlayer] Received answer')
       if (!raw) {
         return
       }
@@ -223,12 +244,11 @@ export class KooPhonePlayer {
         sdp: raw['sdp'] as string
       }
       const sdp: webrtc.RTCSessionDescription = {
-        type: sdpPayload.type as 'offer',
+        type: sdpPayload.type as 'answer',
         sdp: sdpPayload.sdp
       }
       this.rtcSource.setRemoteDescription(sdp)
     } else if (type === 'candidate') {
-      const raw = message.payload
       if (!raw) {
         return
       }
@@ -237,13 +257,43 @@ export class KooPhonePlayer {
         id: raw['id'] as string,
         candidate: raw['candidate'] as string
       }
+      console.info('[KooPhonePlayer] Remote candidate, id:', candidatePayload.id)
       const candidateInit: webrtc.RTCIceCandidateInit = {
         candidate: candidatePayload.candidate,
         sdpMLineIndex: candidatePayload.label ?? 0,
         sdpMid: candidatePayload.id ?? ''
       }
       this.rtcSource.addRemoteIceCandidate(candidateInit)
+    } else if (type === 'init') {
+      // init 回复无需处理，对应 H5 _onInitReply 只打 log
+      console.info('[KooPhonePlayer] Received init reply')
+    } else {
+      console.info('[KooPhonePlayer] Unhandled message type:', type)
     }
+  }
+
+  /**
+   * 解析信令消息 payload：
+   * 对应 H5 CloudPlayer._onRemoteMessage() 第 806-808 行：
+   *   if (!payload && !!message.data) payload = JSON.parse(Base64.decode(message.data))
+   */
+  private resolvePayload(message: KooSignalMessage): Record<string, Object> | null {
+    if (message.payload) {
+      return message.payload
+    }
+    if (message.data) {
+      try {
+        const base64Helper = new util.Base64Helper()
+        const bytes = base64Helper.decodeSync(message.data)
+        const decoder = new util.TextDecoder()
+        const jsonStr = decoder.decodeToString(bytes)
+        console.info('[KooPhonePlayer] Decoded data field:', jsonStr.substring(0, 100))
+        return JSON.parse(jsonStr) as Record<string, Object>
+      } catch (e) {
+        console.error('[KooPhonePlayer] Failed to decode message.data:', String(e))
+      }
+    }
+    return null
   }
 
   private stateChange(newState: KooPhoneState): void {
