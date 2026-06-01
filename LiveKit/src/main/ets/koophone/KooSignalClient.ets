@@ -102,10 +102,11 @@ export class KooSignalClient {
    * 发送 start 请求（AUTHORIZED 后客户端主动触发，服务端回调 start 事件返回 streamId）
    * @param times 重连次数，首次连接传 0
    */
-  emitStart(times: number = 0): void {
-    const payload: Record<string, Object> = { times }
-    this.sendFrame(`42["start",${JSON.stringify(payload)}]`)
-    console.info('[KooSignalClient] Sent start, times:', times)
+  emitStart(boxId: string, times: number = 0): void {
+    const payload: Record<string, Object> = { room: boxId, times }
+    const frame = `42["start",${JSON.stringify(payload)}]`
+    console.info('[KooSignalClient] Sent start frame:', frame)
+    this.sendFrame(frame)
   }
 
   /**
@@ -113,7 +114,9 @@ export class KooSignalClient {
    */
   emitData(type: string, to: string, data: string): void {
     const msg = JSON.stringify({ to, type, data })
-    this.sendFrame(`42["message",${msg}]`)
+    const frame = `42["message",${msg}]`
+    console.info('[KooSignalClient] emitData frame:', frame.substring(0, 200))
+    this.sendFrame(frame)
   }
 
   /**

@@ -114,9 +114,9 @@ export class KooPhonePlayer {
       console.info('[KooPhonePlayer] Authorized')
       this.stateChange(KooPhoneState.AUTHORIZED)
 
-      // AUTHORIZED 后客户端主动发 start 请求，服务端才会回调 start 事件返回 streamId
-      // 对应 H5 CloudPlayer._start() → connection.start({times:0})
-      this.signalClient.emitStart(0)
+      // AUTHORIZED 后客户端主动发 start 请求
+      // H5: connection.start({ room: boxid, times: 0 })
+      this.signalClient.emitStart(this.params?.boxId ?? '', 0)
     }
 
     this.signalClient.onStart = (payload: KooStartPayload) => {
@@ -199,10 +199,12 @@ export class KooPhonePlayer {
 
     // base64 编码（与 H5 btoa(JSON.stringify(params)) 一致）
     const jsonStr = JSON.stringify(initPayload)
+    console.info('[KooPhonePlayer] Init payload JSON:', jsonStr)
     const encoder = new util.TextEncoder()
     const bytes = encoder.encodeInto(jsonStr)
     const base64Helper = new util.Base64Helper()
     const encoded = base64Helper.encodeToStringSync(bytes)
+    console.info('[KooPhonePlayer] Init payload base64:', encoded)
 
     console.info('[KooPhonePlayer] Sending init, remoteId:', this.remoteId)
     this.signalClient.emitData('init', this.remoteId, encoded)
