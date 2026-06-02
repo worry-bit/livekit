@@ -12,6 +12,7 @@ import {
 } from './KooPhoneTypes'
 import { KooSignalClient } from './KooSignalClient'
 import { KooRTCSource } from './KooRTCSource'
+import { KooInputController, TouchAction, KeyAction, TouchPoint, createKooInputController } from './KooInputController'
 
 interface InitPayload {
   sole: boolean
@@ -56,6 +57,7 @@ export class KooPhonePlayer {
 
   private signalClient: KooSignalClient = new KooSignalClient()
   private rtcSource: KooRTCSource = new KooRTCSource()
+  readonly inputController: KooInputController = createKooInputController()
 
   // 事件回调
   onStateChange: OnStateChange | null = null
@@ -203,6 +205,14 @@ export class KooPhonePlayer {
     this.rtcSource.onTrack = (track: webrtc.MediaStreamTrack) => {
       console.info('[KooPhonePlayer] Remote track received, kind:', track.kind)
       this.onTrack?.(track)
+    }
+
+    // DataChannel 就绪后将 sendInputData 绑定给 InputController
+    this.rtcSource.onInputChannelOpen = () => {
+      console.info('[KooPhonePlayer] Input DataChannel ready, binding InputController')
+      this.inputController.setSendFunction((data: ArrayBuffer) => {
+        this.rtcSource.sendInputData(data)
+      })
     }
   }
 

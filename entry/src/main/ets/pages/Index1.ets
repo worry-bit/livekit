@@ -1,5 +1,6 @@
 import { createKooPhonePlayer, KooPhonePlayer } from '../../../../../../LiveKit/src/main/ets/koophone/KooPhonePlayer'
 import { KooPhoneState, KooPhoneError } from '../../../../../../LiveKit/src/main/ets/koophone/KooPhoneTypes'
+import { TouchAction, TouchPoint } from '../../../../../../LiveKit/src/main/ets/koophone/KooInputController'
 
 // ===== 测试参数，按需修改 =====
 const SIGNALING_URL = 'wss://your-signal-server'
@@ -14,6 +15,8 @@ struct Index1 {
   private xCtrl: XComponentController = new XComponentController()
   private surfaceId: string = ''
 
+  @State xComponentWidth: number = 0
+  @State xComponentHeight: number = 0
   @State stateText: string = 'NEW'
   @State errorText: string = ''
   @State isPlaying: boolean = false
@@ -39,9 +42,18 @@ struct Index1 {
     this.player.close()
   }
 
+  private convertTouches(touches: TouchObject[]): TouchPoint[] {
+    const points: TouchPoint[] = []
+    for (let i = 0; i < touches.length; i++) {
+      const t = touches[i]
+      const pt: TouchPoint = { id: t.id, x: t.x, y: t.y }
+      points.push(pt)
+    }
+    return points
+  }
+
   build() {
     Column({ space: 0 }) {
-      // 远端视频渲染区域
       XComponent({
         type: XComponentType.SURFACE,
         controller: this.xCtrl
@@ -58,8 +70,30 @@ struct Index1 {
           this.xComponentReady = false
           this.surfaceId = ''
         })
+        .onAreaChange((_old: Area, newArea: Area) => {
+          this.xComponentWidth = newArea.width as number
+          this.xComponentHeight = newArea.height as number
+          this.player.inputController.setViewSize(this.xComponentWidth, this.xComponentHeight)
+        })
+        .onTouch((event: TouchEvent) => {
+          if (!this.isPlaying) {
+            return
+          }
+          const ctrl = this.player.inputController
+          switch (event.type) {
+            case TouchType.Down:
+              ctrl.sendTouchEvent(TouchAction.DOWN, this.convertTouches(event.touches))
+              break
+            case TouchType.Move:
+              ctrl.sendTouchEvent(TouchAction.MOVE, this.convertTouches(event.touches))
+              break
+            case TouchType.Up:
+            case TouchType.Cancel:
+              ctrl.sendTouchEvent(TouchAction.UP, this.convertTouches(event.changedTouches))
+              break
+          }
+        })
 
-      // 状态显示
       Column({ space: 4 }) {
         Text(`状态: ${this.stateText}`)
           .fontSize(15)
@@ -76,7 +110,6 @@ struct Index1 {
       .padding({ top: 12, left: 16, right: 16 })
       .width('100%')
 
-      // 控制按钮
       Row({ space: 16 }) {
         Button('开始串流')
           .enabled(this.xComponentReady && !this.isPlaying)
