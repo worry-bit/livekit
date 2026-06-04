@@ -1,6 +1,13 @@
-import { createKooPhonePlayer, KooPhonePlayer } from '../../../../../../LiveKit/src/main/ets/koophone/KooPhonePlayer'
-import { KooPhoneState, KooPhoneError, KooPhoneParams } from '../../../../../../LiveKit/src/main/ets/koophone/KooPhoneTypes'
-import { TouchAction, TouchPoint } from '../../../../../../LiveKit/src/main/ets/koophone/KooInputController'
+import {
+  createKooPhonePlayer,
+  KooInputController,
+  KooPhoneError,
+  KooPhoneParams,
+  KooPhonePlayer,
+  KooPhoneState,
+  TouchAction,
+  TouchPoint
+} from 'livekit-harmony'
 
 enum LivePlatform {
   TAOBAO = 'taobao',
@@ -174,6 +181,10 @@ struct Index1 {
     return platform === LivePlatform.TAOBAO ? '淘宝直播' : '抖音直播'
   }
 
+  private isPlatformSelected(platform: LivePlatform): boolean {
+    return platform === LivePlatform.TAOBAO ? this.selectedTaobao : this.selectedDouyin
+  }
+
   private getStateText(platform: LivePlatform): string {
     return platform === LivePlatform.TAOBAO ? this.taobaoStateText : this.douyinStateText
   }
@@ -191,8 +202,8 @@ struct Index1 {
       return
     }
 
-    const player = platform === LivePlatform.TAOBAO ? this.taobaoPlayer : this.douyinPlayer
-    const ctrl = player.inputController
+    const player: KooPhonePlayer = platform === LivePlatform.TAOBAO ? this.taobaoPlayer : this.douyinPlayer
+    const ctrl: KooInputController = player.inputController
     switch (event.type) {
       case TouchType.Down:
         ctrl.sendTouchEvent(TouchAction.DOWN, this.convertTouches(event.touches))
@@ -208,19 +219,19 @@ struct Index1 {
   }
 
   @Builder
-  selectIndicator(selected: boolean) {
+  selectIndicator(platform: LivePlatform) {
     Stack({ alignContent: Alignment.Center }) {
       Text('')
         .width(28)
         .height(28)
         .border({
           width: 1.5,
-          color: selected ? LIVE_RED : '#AAB1BD'
+          color: this.isPlatformSelected(platform) ? LIVE_RED : '#AAB1BD'
         })
         .borderRadius(14)
         .backgroundColor(Color.Transparent)
 
-      if (selected) {
+      if (this.isPlatformSelected(platform)) {
         Text('')
           .width(14)
           .height(14)
@@ -233,9 +244,9 @@ struct Index1 {
   }
 
   @Builder
-  platformOption(platform: LivePlatform, title: string, selected: boolean) {
+  platformOption(platform: LivePlatform, title: string) {
     Row({ space: 18 }) {
-      this.selectIndicator(selected)
+      this.selectIndicator(platform)
 
       Text(title)
         .fontSize(20)
@@ -271,8 +282,8 @@ struct Index1 {
         .margin({ top: this.getPromptTop(), bottom: 28 })
 
       Column({ space: 22 }) {
-        this.platformOption(LivePlatform.TAOBAO, '淘宝直播', this.selectedTaobao)
-        this.platformOption(LivePlatform.DOUYIN, '抖音直播', this.selectedDouyin)
+        this.platformOption(LivePlatform.TAOBAO, '淘宝直播')
+        this.platformOption(LivePlatform.DOUYIN, '抖音直播')
       }
       .width('100%')
 
@@ -280,16 +291,22 @@ struct Index1 {
 
       Row() {
         Blank()
-        Button('开始直播')
+        Row() {
+          Text('开始直播')
+            .fontSize(18)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(Color.White)
+            .maxLines(1)
+        }
           .width(154)
           .height(54)
-          .fontSize(18)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(Color.White)
+          .justifyContent(FlexAlign.Center)
           .backgroundColor(this.hasSelection() ? LIVE_RED : DISABLED_BUTTON)
           .borderRadius(27)
-          .enabled(this.hasSelection())
           .onClick(() => {
+            if (!this.hasSelection()) {
+              return
+            }
             this.startSelectedStreams()
           })
       }

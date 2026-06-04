@@ -5,6 +5,7 @@ import {
   KooPhoneState,
   KooPhoneError,
   KooSignalMessage,
+  KooSignalPayload,
   KooStartPayload,
   OnStateChange,
   OnTrack,
@@ -184,19 +185,19 @@ export class KooPhonePlayer {
   }
 
   private setupRTCHandlers(): void {
-    this.rtcSource.onDescription = (desc: webrtc.RTCSessionDescription) => {
+    this.rtcSource.onDescription = (desc: webrtc.RTCSessionDescriptionInit) => {
       // answer 创建完成，通过信令发送给 boxrtc
       console.info('[KooPhonePlayer] Sending answer')
-      const payload: Record<string, Object> = {
+      const payload: KooSignalPayload = {
         type: desc.type,
-        sdp: desc.sdp
+        sdp: desc.sdp ?? ''
       }
       this.signalClient.emitMessage('answer', this.remoteId, payload)
     }
 
     this.rtcSource.onIceCandidate = (candidate: webrtc.RTCIceCandidate) => {
       // 发送本地 ICE candidate（与 H5 _onLocalIceCandidate 格式一致）
-      const payload: Record<string, Object> = {
+      const payload: KooSignalPayload = {
         label: candidate.sdpMLineIndex ?? 0,
         id: candidate.sdpMid ?? '',
         candidate: candidate.candidate
@@ -283,13 +284,13 @@ export class KooPhonePlayer {
         return
       }
       const sdpPayload: SdpPayload = {
-        type: raw['type'] as string,
-        sdp: raw['sdp'] as string
+        type: raw.type ?? '',
+        sdp: raw.sdp ?? ''
       }
       console.info('[KooPhonePlayer] offer sdp type:', sdpPayload.type,
         'sdp length:', sdpPayload.sdp?.length ?? 0)
-      const sdp: webrtc.RTCSessionDescription = {
-        type: sdpPayload.type as 'offer',
+      const sdp: webrtc.RTCSessionDescriptionInit = {
+        type: sdpPayload.type as webrtc.RTCSdpType,
         sdp: sdpPayload.sdp
       }
       this.rtcSource.setRemoteDescription(sdp)
@@ -299,11 +300,11 @@ export class KooPhonePlayer {
         return
       }
       const sdpPayload: SdpPayload = {
-        type: raw['type'] as string,
-        sdp: raw['sdp'] as string
+        type: raw.type ?? '',
+        sdp: raw.sdp ?? ''
       }
-      const sdp: webrtc.RTCSessionDescription = {
-        type: sdpPayload.type as 'answer',
+      const sdp: webrtc.RTCSessionDescriptionInit = {
+        type: sdpPayload.type as webrtc.RTCSdpType,
         sdp: sdpPayload.sdp
       }
       this.rtcSource.setRemoteDescription(sdp)
@@ -312,9 +313,9 @@ export class KooPhonePlayer {
         return
       }
       const candidatePayload: CandidatePayload = {
-        label: raw['label'] as number,
-        id: raw['id'] as string,
-        candidate: raw['candidate'] as string
+        label: raw.label ?? 0,
+        id: raw.id ?? '',
+        candidate: raw.candidate ?? ''
       }
       console.info('[KooPhonePlayer] Remote candidate, id:', candidatePayload.id)
       const candidateInit: webrtc.RTCIceCandidateInit = {
@@ -336,7 +337,7 @@ export class KooPhonePlayer {
    * 对应 H5 CloudPlayer._onRemoteMessage() 第 806-808 行：
    *   if (!payload && !!message.data) payload = JSON.parse(Base64.decode(message.data))
    */
-  private resolvePayload(message: KooSignalMessage): Record<string, Object> | null {
+  private resolvePayload(message: KooSignalMessage): KooSignalPayload | null {
     if (message.payload) {
       return message.payload
     }
@@ -347,7 +348,7 @@ export class KooPhonePlayer {
         const decoder = new util.TextDecoder()
         const jsonStr = decoder.decodeToString(bytes)
         console.info('[KooPhonePlayer] Decoded data field:', jsonStr.substring(0, 100))
-        return JSON.parse(jsonStr) as Record<string, Object>
+        return JSON.parse(jsonStr) as KooSignalPayload
       } catch (e) {
         console.error('[KooPhonePlayer] Failed to decode message.data:', String(e))
       }
@@ -365,9 +366,9 @@ export class KooPhonePlayer {
       } else if (i === 14) {
         uuid += '4'
       } else if (i === 19) {
-        uuid += hex[(Math.random() * 4 | 0) + 8]
+        uuid += hex.charAt((Math.random() * 4 | 0) + 8)
       } else {
-        uuid += hex[Math.random() * 16 | 0]
+        uuid += hex.charAt(Math.random() * 16 | 0)
       }
     }
     return uuid

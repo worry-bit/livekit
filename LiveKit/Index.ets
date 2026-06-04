@@ -40,3 +40,16 @@ export { SignalClient } from './src/main/ets/util/SignalClient'
 export { RTCEngine } from './src/main/ets/util/RTCEngine'
 
 export type { RTCEngineDelegate } from './src/main/ets/util/RTCEngine'
+
+// 云手机串流播放器（折叠屏直播页使用）
+export { KooPhonePlayer, createKooPhonePlayer } from './src/main/ets/koophone/KooPhonePlayer'
+export {
+  KooPhoneState,
+  KooPhoneError,
+  KooPhoneParams
+} from './src/main/ets/koophone/KooPhoneTypes'
+export {
+  KooInputController,
+  TouchAction
+} from './src/main/ets/koophone/KooInputController'
+export type { TouchPoint } from './src/main/ets/koophone/KooInputController'

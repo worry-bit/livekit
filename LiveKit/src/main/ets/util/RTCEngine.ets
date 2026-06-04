@@ -296,9 +296,8 @@ export class RTCEngine {
         this.videoTrack.stop()
       }
       if (this.videoSource) {
-        this.videoSource.release()
         this.videoSource = null
-        console.info('[RTCEngine] VideoSource released')
+        console.info('[RTCEngine] VideoSource cleared')
       }
 
       // 3. 从 PeerConnection 移除视频轨道（触发重新协商）
@@ -370,7 +369,9 @@ export class RTCEngine {
 
       // 释放旧资源
       prevVideoTrack.stop()
-      prevVideoSource?.release()
+      if (prevVideoSource) {
+        console.info('[RTCEngine] Previous VideoSource cleared')
+      }
 
       console.info('[RTCEngine] Camera switched to:', newFacingMode)
     } catch (error) {
@@ -406,7 +407,6 @@ export class RTCEngine {
       this.videoTrack = null
     }
     if (this.videoSource) {
-      this.videoSource.release()
       this.videoSource = null
     }
 

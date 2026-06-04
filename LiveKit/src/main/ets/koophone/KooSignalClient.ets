@@ -2,7 +2,8 @@ import { webSocket } from '@kit.NetworkKit'
 import {
   KooSignalMessage,
   KooAuthorizePayload,
-  KooStartPayload
+  KooStartPayload,
+  KooSignalPayload
 } from './KooPhoneTypes'
 
 interface HandshakeJson {
@@ -14,7 +15,35 @@ interface HandshakeJson {
 // Socket.IO 事件帧结构：42["eventName", payload]
 interface SocketEventFrame {
   eventName: string
-  payload: Record<string, Object>
+  payload: SocketPayload
+}
+
+interface SocketPayload {
+  authorized?: boolean
+  code?: number
+  streamId?: string
+  vcodec?: string
+  type?: string
+  from?: string
+  payload?: KooSignalPayload
+  data?: string
+}
+
+interface StartFramePayload {
+  room: string
+  times: number
+}
+
+interface DataFramePayload {
+  to: string
+  type: string
+  data: string
+}
+
+interface MessageFramePayload {
+  to: string
+  type: string
+  payload: KooSignalPayload
 }
 
 export class KooSignalClient {
@@ -103,7 +132,7 @@ export class KooSignalClient {
    * @param times 重连次数，首次连接传 0
    */
   emitStart(boxId: string, times: number = 0): void {
-    const payload: Record<string, Object> = { room: boxId, times }
+    const payload: StartFramePayload = { room: boxId, times }
     const frame = `42["start",${JSON.stringify(payload)}]`
     console.info('[KooSignalClient] Sent start frame:', frame)
     this.sendFrame(frame)
@@ -113,7 +142,8 @@ export class KooSignalClient {
    * 发送 data 类型消息（用于 init 请求，data 为 base64 编码的 JSON）
    */
   emitData(type: string, to: string, data: string): void {
-    const msg = JSON.stringify({ to, type, data })
+    const payload: DataFramePayload = { to, type, data }
+    const msg = JSON.stringify(payload)
     const frame = `42["message",${msg}]`
     console.info('[KooSignalClient] emitData frame:', frame.substring(0, 200))
     this.sendFrame(frame)
@@ -122,8 +152,9 @@ export class KooSignalClient {
   /**
    * 发送 message 类型消息（用于 answer/candidate）
    */
-  emitMessage(type: string, to: string, payload: Record<string, Object>): void {
-    const msg = JSON.stringify({ to, type, payload })
+  emitMessage(type: string, to: string, payload: KooSignalPayload): void {
+    const message: MessageFramePayload = { to, type, payload }
+    const msg = JSON.stringify(message)
     this.sendFrame(`42["message",${msg}]`)
   }
 
@@ -184,34 +215,34 @@ export class KooSignalClient {
       }
       const frame: SocketEventFrame = {
         eventName: arr[0] as string,
-        payload: arr[1] as Record<string, Object>
+        payload: arr[1] as SocketPayload
       }
 
       console.info('[KooSignalClient] Event:', frame.eventName)
 
       if (frame.eventName === 'authorize') {
         const auth: KooAuthorizePayload = {
-          authorized: frame.payload['authorized'] as boolean,
-          code: frame.payload['code'] as number
+          authorized: frame.payload.authorized === true,
+          code: frame.payload.code ?? 0
         }
         console.info('[KooSignalClient] Authorize result:', auth.authorized)
         this.onAuthorize?.(auth.authorized === true)
       } else if (frame.eventName === 'start') {
         const startPayload: KooStartPayload = {
-          streamId: frame.payload['streamId'] as string,
-          vcodec: frame.payload['vcodec'] as string | undefined
+          streamId: frame.payload.streamId ?? '',
+          vcodec: frame.payload.vcodec
         }
         console.info('[KooSignalClient] Start, streamId:', startPayload.streamId)
         this.onStart?.(startPayload)
       } else if (frame.eventName === 'message') {
         // 打印原始 payload 结构，便于排查 payload/data 字段
         console.info('[KooSignalClient] Message payload keys:',
-          Object.keys(frame.payload).join(','))
+          JSON.stringify(frame.payload).substring(0, 200))
         const msg: KooSignalMessage = {
-          type: frame.payload['type'] as string,
-          from: frame.payload['from'] as string,
-          payload: frame.payload['payload'] as Record<string, Object> | undefined,
-          data: frame.payload['data'] as string | undefined
+          type: frame.payload.type ?? '',
+          from: frame.payload.from ?? '',
+          payload: frame.payload.payload,
+          data: frame.payload.data
         }
         console.info('[KooSignalClient] Message type:', msg.type,
           'hasPayload:', !!msg.payload, 'hasData:', !!msg.data)

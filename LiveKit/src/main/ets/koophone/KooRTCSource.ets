@@ -15,7 +15,7 @@ export class KooRTCSource {
   private inputChannel: webrtc.RTCDataChannel | null = null
 
   // 事件回调
-  onDescription: ((desc: webrtc.RTCSessionDescription) => void) | null = null
+  onDescription: ((desc: webrtc.RTCSessionDescriptionInit) => void) | null = null
   onIceCandidate: ((candidate: webrtc.RTCIceCandidate) => void) | null = null
   onConnectionStateChange: ((state: webrtc.RTCPeerConnectionState) => void) | null = null
   onTrack: ((track: webrtc.MediaStreamTrack) => void) | null = null
@@ -86,7 +86,7 @@ export class KooRTCSource {
   /**
    * 收到服务端 offer，设置 remote description 并自动创建 answer
    */
-  async setRemoteDescription(sdp: webrtc.RTCSessionDescription): Promise<void> {
+  async setRemoteDescription(sdp: webrtc.RTCSessionDescriptionInit): Promise<void> {
     if (!this.pc) {
       console.error('[KooRTCSource] pc is null')
       return
@@ -289,14 +289,12 @@ export class KooRTCSource {
     }
 
     try {
-      // pc.createAnswer() 返回 RTCSessionDescriptionInit，需转为 RTCSessionDescription
       const answerInit = await this.pc.createAnswer()
       await this.pc.setLocalDescription(answerInit)
       console.info('[KooRTCSource] Answer created and local description set')
 
-      // 构造完整的 RTCSessionDescription 传给回调
-      const answer: webrtc.RTCSessionDescription = {
-        type: answerInit.type as 'answer',
+      const answer: webrtc.RTCSessionDescriptionInit = {
+        type: answerInit.type,
         sdp: answerInit.sdp ?? ''
       }
       this.onDescription?.(answer)

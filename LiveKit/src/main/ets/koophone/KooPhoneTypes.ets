@@ -44,7 +44,7 @@ export enum KooPhoneError {
 export interface KooSignalMessage {
   type: string       // 'offer' | 'answer' | 'candidate'
   from: string
-  payload?: Record<string, Object>
+  payload?: KooSignalPayload
   data?: string      // base64 编码（init 响应用）
 }
 
@@ -58,6 +58,14 @@ export interface KooAuthorizePayload {
 export interface KooStartPayload {
   streamId: string
   vcodec?: string
+}
+
+export interface KooSignalPayload {
+  type?: string
+  sdp?: string
+  label?: number
+  id?: string
+  candidate?: string
 }
 
 // 事件回调类型
