@@ -179,6 +179,14 @@ export class KooPhonePlayer {
     this.signalClient.onClosed = () => {
       console.info('[KooPhonePlayer] Signal connection closed')
       if (this._state !== KooPhoneState.CLOSED) {
+        this.emitError(KooPhoneError.SIGNAL_CONNECT_FAILED, 'Signal connection closed before stream was ready')
+        this.close()
+      }
+    }
+
+    this.signalClient.onError = (message: string) => {
+      if (this._state !== KooPhoneState.CLOSED) {
+        this.emitError(KooPhoneError.SIGNAL_CONNECT_FAILED, message)
         this.close()
       }
     }

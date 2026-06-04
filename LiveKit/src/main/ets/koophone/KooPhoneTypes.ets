@@ -14,6 +14,41 @@ export interface KooPhoneParams {
   volume?: number             // 默认 100
 }
 
+// IAM 用户密码认证配置。真实账号密码只允许本地替换，不应提交到 git。
+export interface IamPasswordConfig {
+  authUrl: string
+  domainName: string
+  userName: string
+  password: string
+  projectName?: string
+}
+
+// KooPhone auth 预留接口配置。官网接口已下线，当前只固定 body.token 解析规则。
+export interface KooAuthConfig {
+  authUrl: string
+  tenantId?: string
+  projectId?: string
+}
+
+// 直播平台固定配置：signalingUrl/boxId 写死，SDK token 每次开流前动态获取。
+export interface LivePlatformConfig {
+  signalingUrl: string
+  boxId: string
+  iam: IamPasswordConfig
+  kooAuth: KooAuthConfig
+  iceServers?: KooIceServer[]
+  mode?: string
+  role?: string
+  sole?: boolean
+  volume?: number
+}
+
+// KooPhone auth 返回给 SDK 的短效 token。当前业务约束为约 15 秒有效期。
+export interface KooAuthTokenResult {
+  token: string
+  expiresAt?: string
+}
+
 export interface KooIceServer {
   uri: string
   usr?: string

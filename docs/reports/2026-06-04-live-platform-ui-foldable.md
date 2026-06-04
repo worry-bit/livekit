@@ -119,3 +119,54 @@
   - `ohpm --version`：command not found
 
 需要在 DevEco Studio 或已配置 HarmonyOS CLI 的环境中进行最终编译和 Mate X7 真机验证。
+
+## 2026-06-04 补充：外屏选择与动态 token 计划落地
+
+本次继续补强：
+- `TAOBAO_PARAMS / DOUYIN_PARAMS` 升级为 `TAOBAO_CONFIG / DOUYIN_CONFIG`，保留固定 `signalingUrl / boxId`，不再写死 SDK token。
+- 外屏/窄屏未开播前也使用同一套淘宝/抖音选择页。
+- 直播态新增“停止串流”控制，停止后关闭两路播放器并回到选择页。
+- 每路串流启动前先调用 `KooAuthService` 获取短效 SDK token。
+- 每路串流失败后最多自动重试 3 次，双选时两路互不影响。
+
+详细调试路径和架构图见：`docs/koophone-live-debug-guide.md`。
+
+## 2026-06-04 补充：IAM/KooPhone auth 与三次重试实现
+
+本次新增类：
+- `KooAuthService`：串流前的鉴权服务，先调用华为云 IAM `POST /v3/auth/tokens` 获取 `X-Subject-Token`，再调用预留 KooPhone auth 接口，从响应 `body.token` 取 SDK 短效 token。
+
+本次新增类型：
+- `IamPasswordConfig`：IAM 用户密码认证配置，包含 `authUrl / domainName / userName / password / projectName`。
+- `KooAuthConfig`：预留 KooPhone auth 接口配置，包含 `authUrl / tenantId / projectId`。
+- `LivePlatformConfig`：每个平台的固定串流配置，包含 `signalingUrl / boxId / iam / kooAuth / iceServers` 等。
+- `KooAuthTokenResult`：KooPhone auth 返回的 SDK token 结果，包含 `token / expiresAt`。
+
+新增和补强的方法：
+- `KooAuthService.requestSdkToken(config)`：每次启动或重试前获取新的 SDK token，避免复用 15 秒短 token。
+- `KooAuthService.requestIamToken(config)`：调用 IAM token 接口，并从响应头解析 `X-Subject-Token`。
+- `KooAuthService.requestKooPhoneAuth(config, boxId, iamToken)`：调用预留 auth 接口，并按 `body.token` 解析 SDK token。
+- `KooAuthService.safeRequest(...)`：统一捕获 NetworkKit 请求异常，保证页面错误提示稳定。
+- `Index1.startPlatformIfReady(platform)`：改为异步启动，串流前先动态获取 SDK token。
+- `Index1.schedulePlatformRetry(platform, reason)`：每路最多自动重试 3 次，延迟为 800ms、1600ms、2400ms。
+- `Index1.stopSelectedStreams()`：停止两路串流，回到选择页并保留当前选中状态。
+- `KooSignalClient.onError`：把 WebSocket open/connect/send/error 失败透传到播放器。
+- `KooPhonePlayer.setupSignalHandlers()`：信令异常 close 也会触发错误回调，进入页面重试逻辑。
+
+实现能力：
+- 外屏/窄屏未开始直播前复用同一选择页，选择逻辑和展开屏一致。
+- 单选抖音时，抖音固定显示在展开屏左半屏，右半屏显示“暂无直播内容”。
+- 双选时，展开屏左右两路同时创建独立 `KooPhonePlayer` 实例。
+- 每个平台串流失败互不影响，淘宝失败不会阻断抖音，抖音失败也不会关闭淘宝。
+- 直播态停止按钮移到右下角，避免遮挡每路状态浮层。
+
+验证截图：
+- `outputs/livekit-auth-selection.jpeg`：展开屏未选择，开始按钮灰色。
+- `outputs/livekit-douyin-selected.jpeg`：单选抖音，圆点和按钮变红。
+- `outputs/livekit-douyin-live-expanded.jpeg`：单选抖音后，左侧抖音串流面板，右侧“暂无直播内容”。
+- `outputs/livekit-double-selected.jpeg`：淘宝/抖音双选。
+- `outputs/livekit-double-live-expanded-final.jpeg`：双选后左右两路独立串流面板和三次重试结果。
+
+当前限制：
+- 真实 IAM/KooPhone 凭据不入库，因此截图里显示的是占位参数触发的 `IAM config is incomplete`，用于验证错误展示和三次重试链路。
+- DevEco Emulator 公共 CLI 未暴露折叠/展开切换命令；外屏行为已由 `rootWidth < 700` 的窄屏分支实现，仍建议在 DevEco 模拟器工具栏或真机上手动折叠再补充截图。

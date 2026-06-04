@@ -1,10 +1,13 @@
 import {
+  createKooAuthService,
   createKooPhonePlayer,
+  KooAuthService,
   KooInputController,
   KooPhoneError,
   KooPhoneParams,
   KooPhonePlayer,
   KooPhoneState,
+  LivePlatformConfig,
   TouchAction,
   TouchPoint
 } from 'livekit-harmony'
@@ -14,19 +17,42 @@ enum LivePlatform {
   DOUYIN = 'douyin'
 }
 
-const TAOBAO_PARAMS: KooPhoneParams = {
+const TAOBAO_CONFIG: LivePlatformConfig = {
   signalingUrl: 'wss://your-taobao-signal-server',
   boxId: 'your-taobao-box-id',
-  token: 'your-taobao-token'
+  iam: {
+    authUrl: 'https://iam.myhuaweicloud.com/v3/auth/tokens',
+    domainName: '',
+    userName: '',
+    password: '',
+    projectName: ''
+  },
+  kooAuth: {
+    authUrl: '',
+    tenantId: '',
+    projectId: ''
+  }
 }
 
-const DOUYIN_PARAMS: KooPhoneParams = {
+const DOUYIN_CONFIG: LivePlatformConfig = {
   signalingUrl: 'wss://your-douyin-signal-server',
   boxId: 'your-douyin-box-id',
-  token: 'your-douyin-token'
+  iam: {
+    authUrl: 'https://iam.myhuaweicloud.com/v3/auth/tokens',
+    domainName: '',
+    userName: '',
+    password: '',
+    projectName: ''
+  },
+  kooAuth: {
+    authUrl: '',
+    tenantId: '',
+    projectId: ''
+  }
 }
 
 const EXPANDED_SCREEN_MIN_WIDTH = 700
+const MAX_STREAM_RETRY = 3
 const PAGE_BACKGROUND = '#F7F8FC'
 const ROW_BACKGROUND = '#F0F2F7'
 const TEXT_PRIMARY = '#20232A'
@@ -37,6 +63,7 @@ const LIVE_RED = '#E53935'
 @Entry
 @Component
 struct Index1 {
+  private authService: KooAuthService = createKooAuthService()
   private taobaoPlayer: KooPhonePlayer = createKooPhonePlayer()
   private douyinPlayer: KooPhonePlayer = createKooPhonePlayer()
   private taobaoXCtrl: XComponentController = new XComponentController()
@@ -47,6 +74,8 @@ struct Index1 {
   private shouldStartDouyin: boolean = false
   private taobaoStarted: boolean = false
   private douyinStarted: boolean = false
+  private taobaoRetryTimer: number = -1
+  private douyinRetryTimer: number = -1
 
   @State rootWidth: number = 0
   @State rootHeight: number = 0
@@ -57,6 +86,10 @@ struct Index1 {
   @State douyinReady: boolean = false
   @State taobaoPlaying: boolean = false
   @State douyinPlaying: boolean = false
+  @State taobaoStarting: boolean = false
+  @State douyinStarting: boolean = false
+  @State taobaoRetryCount: number = 0
+  @State douyinRetryCount: number = 0
   @State taobaoStateText: string = 'NEW'
   @State douyinStateText: string = 'NEW'
   @State taobaoErrorText: string = ''
@@ -69,8 +102,7 @@ struct Index1 {
     }
 
     this.taobaoPlayer.onError = (code: KooPhoneError, msg: string) => {
-      this.taobaoErrorText = `Error ${code}: ${msg}`
-      this.taobaoPlaying = false
+      this.handlePlatformError(LivePlatform.TAOBAO, code, msg)
     }
 
     this.taobaoPlayer.onTrack = () => {
@@ -83,8 +115,7 @@ struct Index1 {
     }
 
     this.douyinPlayer.onError = (code: KooPhoneError, msg: string) => {
-      this.douyinErrorText = `Error ${code}: ${msg}`
-      this.douyinPlaying = false
+      this.handlePlatformError(LivePlatform.DOUYIN, code, msg)
     }
 
     this.douyinPlayer.onTrack = () => {
@@ -96,6 +127,10 @@ struct Index1 {
     this.closeAllStreams()
   }
 
+  /**
+   * 将 ArkUI 触摸点转换为云手机输入控制器使用的 TouchPoint。
+   * 直播画面可见且 WebRTC DataChannel 就绪后，这些点会被编码并发往云手机。
+   */
   private convertTouches(touches: TouchObject[]): TouchPoint[] {
     const points: TouchPoint[] = []
     for (let i = 0; i < touches.length; i++) {
@@ -106,22 +141,37 @@ struct Index1 {
     return points
   }
 
+  /**
+   * 只要淘宝或抖音任意一路被选中，开始按钮就进入可点击态。
+   */
   private hasSelection(): boolean {
     return this.selectedTaobao || this.selectedDouyin
   }
 
+  /**
+   * Mate X7 展开屏宽度远大于外屏；这里用窗口宽度判断当前布局形态。
+   */
   private isExpandedScreen(): boolean {
     return this.rootWidth >= EXPANDED_SCREEN_MIN_WIDTH
   }
 
+  /**
+   * 展开屏给选择页更大的左右留白，外屏保留更紧凑的可用空间。
+   */
   private getPagePadding(): number {
     return this.rootWidth >= EXPANDED_SCREEN_MIN_WIDTH ? 48 : 24
   }
 
+  /**
+   * 展开屏中部标题下移，外屏减少顶部空间占用。
+   */
   private getPromptTop(): number {
     return this.rootWidth >= EXPANDED_SCREEN_MIN_WIDTH ? 96 : 56
   }
 
+  /**
+   * 主直播永远显示在左侧或外屏：双选优先淘宝，单选抖音时抖音成为主直播。
+   */
   private getPrimaryPlatform(): LivePlatform {
     if (this.selectedTaobao) {
       return LivePlatform.TAOBAO
@@ -129,6 +179,9 @@ struct Index1 {
     return LivePlatform.DOUYIN
   }
 
+  /**
+   * 点击平台行时切换选中态；两个平台互不排斥，因此天然支持单选和双选。
+   */
   private togglePlatform(platform: LivePlatform): void {
     if (platform === LivePlatform.TAOBAO) {
       this.selectedTaobao = !this.selectedTaobao
@@ -137,44 +190,279 @@ struct Index1 {
     this.selectedDouyin = !this.selectedDouyin
   }
 
+  /**
+   * 从选择页进入直播页。这里只记录“应当启动哪些平台”，真正 open 会等 XComponent
+   * surfaceId 准备好后由 startPlatformIfReady 触发。
+   */
   private startSelectedStreams(): void {
     if (!this.hasSelection()) {
       return
     }
 
-    this.taobaoErrorText = ''
-    this.douyinErrorText = ''
+    this.resetPlatformRuntime(LivePlatform.TAOBAO)
+    this.resetPlatformRuntime(LivePlatform.DOUYIN)
     this.shouldStartTaobao = this.selectedTaobao
     this.shouldStartDouyin = this.selectedDouyin
     this.isLiveStarted = true
   }
 
-  private startPlatformIfReady(platform: LivePlatform): void {
-    if (platform === LivePlatform.TAOBAO) {
-      if (!this.shouldStartTaobao || this.taobaoStarted || !this.taobaoReady || this.taobaoSurfaceId.length === 0) {
+  /**
+   * surfaceId 就绪后启动某一路串流。每次启动先获取 IAM token，再调用预留
+   * KooPhone auth 获取 15 秒短效 SDK token，最后才调用 KooPhonePlayer.open。
+   */
+  private async startPlatformIfReady(platform: LivePlatform): Promise<void> {
+    if (!this.canStartPlatform(platform)) {
+      return
+    }
+
+    this.setPlatformStarting(platform, true)
+    this.setPlatformErrorText(platform, '')
+    this.setPlatformStateText(platform, `authenticating(${this.getRetryCount(platform)}/${MAX_STREAM_RETRY})`)
+
+    try {
+      const config = this.getPlatformConfig(platform)
+      const tokenResult = await this.authService.requestSdkToken(config)
+      if (!this.canOpenPlatformAfterAuth(platform)) {
+        this.setPlatformStarting(platform, false)
         return
       }
-      this.taobaoStarted = true
-      this.taobaoPlayer.open(TAOBAO_PARAMS, this.taobaoSurfaceId)
-      return
-    }
 
-    if (!this.shouldStartDouyin || this.douyinStarted || !this.douyinReady || this.douyinSurfaceId.length === 0) {
-      return
+      const params = this.buildKooPhoneParams(config, tokenResult.token)
+      this.setPlatformStarted(platform, true)
+      this.setPlatformStarting(platform, false)
+      this.setPlatformStateText(platform, 'connecting')
+      this.getPlatformPlayer(platform).open(params, this.getPlatformSurfaceId(platform))
+    } catch (e) {
+      this.setPlatformStarting(platform, false)
+      this.schedulePlatformRetry(platform, String(e))
     }
-    this.douyinStarted = true
-    this.douyinPlayer.open(DOUYIN_PARAMS, this.douyinSurfaceId)
   }
 
+  /**
+   * 停止按钮使用的显式停止入口。停止后回到选择页，但保留当前平台选择，
+   * 方便用户在外屏/展开屏之间反复调试。
+   */
+  private stopSelectedStreams(): void {
+    this.closeAllStreams()
+    this.taobaoErrorText = ''
+    this.douyinErrorText = ''
+    this.taobaoStateText = 'NEW'
+    this.douyinStateText = 'NEW'
+    this.isLiveStarted = false
+  }
+
+  /**
+   * 页面销毁、停止串流或重试前使用的统一清理方法。
+   */
   private closeAllStreams(): void {
+    this.clearRetryTimer(LivePlatform.TAOBAO)
+    this.clearRetryTimer(LivePlatform.DOUYIN)
     this.taobaoPlayer.close()
     this.douyinPlayer.close()
     this.shouldStartTaobao = false
     this.shouldStartDouyin = false
     this.taobaoStarted = false
     this.douyinStarted = false
+    this.taobaoStarting = false
+    this.douyinStarting = false
     this.taobaoPlaying = false
     this.douyinPlaying = false
+    this.taobaoRetryCount = 0
+    this.douyinRetryCount = 0
+  }
+
+  private resetPlatformRuntime(platform: LivePlatform): void {
+    this.clearRetryTimer(platform)
+    if (platform === LivePlatform.TAOBAO) {
+      this.taobaoStarted = false
+      this.taobaoStarting = false
+      this.taobaoPlaying = false
+      this.taobaoRetryCount = 0
+      this.taobaoErrorText = ''
+      this.taobaoStateText = 'NEW'
+      return
+    }
+    this.douyinStarted = false
+    this.douyinStarting = false
+    this.douyinPlaying = false
+    this.douyinRetryCount = 0
+    this.douyinErrorText = ''
+    this.douyinStateText = 'NEW'
+  }
+
+  private canStartPlatform(platform: LivePlatform): boolean {
+    return this.shouldStartPlatform(platform) &&
+      !this.isPlatformStarted(platform) &&
+      !this.isPlatformStarting(platform) &&
+      this.isPlatformReady(platform) &&
+      this.getPlatformSurfaceId(platform).length > 0
+  }
+
+  private canOpenPlatformAfterAuth(platform: LivePlatform): boolean {
+    return this.shouldStartPlatform(platform) &&
+      this.isPlatformReady(platform) &&
+      this.getPlatformSurfaceId(platform).length > 0
+  }
+
+  private shouldStartPlatform(platform: LivePlatform): boolean {
+    return platform === LivePlatform.TAOBAO ? this.shouldStartTaobao : this.shouldStartDouyin
+  }
+
+  private isPlatformReady(platform: LivePlatform): boolean {
+    return platform === LivePlatform.TAOBAO ? this.taobaoReady : this.douyinReady
+  }
+
+  private isPlatformStarted(platform: LivePlatform): boolean {
+    return platform === LivePlatform.TAOBAO ? this.taobaoStarted : this.douyinStarted
+  }
+
+  private isPlatformStarting(platform: LivePlatform): boolean {
+    return platform === LivePlatform.TAOBAO ? this.taobaoStarting : this.douyinStarting
+  }
+
+  private getRetryCount(platform: LivePlatform): number {
+    return platform === LivePlatform.TAOBAO ? this.taobaoRetryCount : this.douyinRetryCount
+  }
+
+  private getPlatformSurfaceId(platform: LivePlatform): string {
+    return platform === LivePlatform.TAOBAO ? this.taobaoSurfaceId : this.douyinSurfaceId
+  }
+
+  private getPlatformConfig(platform: LivePlatform): LivePlatformConfig {
+    return platform === LivePlatform.TAOBAO ? TAOBAO_CONFIG : DOUYIN_CONFIG
+  }
+
+  private getPlatformPlayer(platform: LivePlatform): KooPhonePlayer {
+    return platform === LivePlatform.TAOBAO ? this.taobaoPlayer : this.douyinPlayer
+  }
+
+  private buildKooPhoneParams(config: LivePlatformConfig, token: string): KooPhoneParams {
+    return {
+      signalingUrl: config.signalingUrl,
+      boxId: config.boxId,
+      token,
+      iceServers: config.iceServers,
+      mode: config.mode,
+      role: config.role,
+      sole: config.sole,
+      volume: config.volume
+    }
+  }
+
+  private setPlatformStarted(platform: LivePlatform, started: boolean): void {
+    if (platform === LivePlatform.TAOBAO) {
+      this.taobaoStarted = started
+      return
+    }
+    this.douyinStarted = started
+  }
+
+  private setPlatformStarting(platform: LivePlatform, starting: boolean): void {
+    if (platform === LivePlatform.TAOBAO) {
+      this.taobaoStarting = starting
+      return
+    }
+    this.douyinStarting = starting
+  }
+
+  private setPlatformRetryCount(platform: LivePlatform, retryCount: number): void {
+    if (platform === LivePlatform.TAOBAO) {
+      this.taobaoRetryCount = retryCount
+      return
+    }
+    this.douyinRetryCount = retryCount
+  }
+
+  private setPlatformStateText(platform: LivePlatform, text: string): void {
+    if (platform === LivePlatform.TAOBAO) {
+      this.taobaoStateText = text
+      return
+    }
+    this.douyinStateText = text
+  }
+
+  private setPlatformErrorText(platform: LivePlatform, text: string): void {
+    if (platform === LivePlatform.TAOBAO) {
+      this.taobaoErrorText = text
+      return
+    }
+    this.douyinErrorText = text
+  }
+
+  private clearRetryTimer(platform: LivePlatform): void {
+    const timer = platform === LivePlatform.TAOBAO ? this.taobaoRetryTimer : this.douyinRetryTimer
+    if (timer !== -1) {
+      clearTimeout(timer)
+    }
+    if (platform === LivePlatform.TAOBAO) {
+      this.taobaoRetryTimer = -1
+      return
+    }
+    this.douyinRetryTimer = -1
+  }
+
+  private setRetryTimer(platform: LivePlatform, timer: number): void {
+    if (platform === LivePlatform.TAOBAO) {
+      this.taobaoRetryTimer = timer
+      return
+    }
+    this.douyinRetryTimer = timer
+  }
+
+  /**
+   * 接收播放器底层错误并交给重试调度。双选时每个平台独立处理，
+   * 一路失败不会影响另一路已启动或正在重试的串流。
+   */
+  private handlePlatformError(platform: LivePlatform, code: KooPhoneError, msg: string): void {
+    if (platform === LivePlatform.TAOBAO) {
+      this.taobaoPlaying = false
+    } else {
+      this.douyinPlaying = false
+    }
+    this.schedulePlatformRetry(platform, `Error ${code}: ${msg}`)
+  }
+
+  /**
+   * 串流失败后最多自动重试三次。每次重试都重新走 IAM + KooPhone auth，
+   * 避免复用已经接近过期的 15 秒 SDK token。
+   */
+  private schedulePlatformRetry(platform: LivePlatform, reason: string): void {
+    if (!this.shouldStartPlatform(platform)) {
+      return
+    }
+
+    this.clearRetryTimer(platform)
+    this.getPlatformPlayer(platform).close()
+    this.setPlatformStarted(platform, false)
+    this.setPlatformStarting(platform, false)
+
+    const currentRetryCount = this.getRetryCount(platform)
+    if (currentRetryCount >= MAX_STREAM_RETRY) {
+      this.setPlatformStateText(platform, 'failed')
+      this.setPlatformErrorText(platform, `${reason}; 已自动重试 ${MAX_STREAM_RETRY} 次`)
+      return
+    }
+
+    const nextRetryCount = currentRetryCount + 1
+    this.setPlatformRetryCount(platform, nextRetryCount)
+    this.setPlatformErrorText(platform, `${reason}; 正在自动重试 ${nextRetryCount}/${MAX_STREAM_RETRY}`)
+    this.setPlatformStateText(platform, 'retrying')
+
+    const timer = setTimeout(() => {
+      this.setRetryTimer(platform, -1)
+      this.startPlatformIfReady(platform)
+    }, this.getRetryDelayMs(nextRetryCount)) as number
+    this.setRetryTimer(platform, timer)
+  }
+
+  private getRetryDelayMs(retryCount: number): number {
+    if (retryCount === 1) {
+      return 800
+    }
+    if (retryCount === 2) {
+      return 1600
+    }
+    return 2400
   }
 
   private getPlatformTitle(platform: LivePlatform): string {
@@ -197,6 +485,10 @@ struct Index1 {
     return platform === LivePlatform.TAOBAO ? this.taobaoPlaying : this.douyinPlaying
   }
 
+  /**
+   * 直播画面触摸转发入口。只有 WebRTC 已进入 PLAYING 后才发送触摸数据，
+   * 防止连接阶段把无效输入发给云手机。
+   */
   private handleSurfaceTouch(platform: LivePlatform, event: TouchEvent): void {
     if (!this.isPlatformPlaying(platform)) {
       return
@@ -218,6 +510,9 @@ struct Index1 {
     }
   }
 
+  /**
+   * 选中态圆点。直接读取平台状态，避免 @Builder 参数缓存导致 UI 不刷新。
+   */
   @Builder
   selectIndicator(platform: LivePlatform) {
     Stack({ alignContent: Alignment.Center }) {
@@ -243,6 +538,9 @@ struct Index1 {
     .height(32)
   }
 
+  /**
+   * 平台选择行。外屏和展开屏共用同一组件，保证选择逻辑一致。
+   */
   @Builder
   platformOption(platform: LivePlatform, title: string) {
     Row({ space: 18 }) {
@@ -265,6 +563,9 @@ struct Index1 {
     })
   }
 
+  /**
+   * 开始直播选择页。rootWidth 变化时只调整间距，不改变交互逻辑。
+   */
   @Builder
   selectionPage() {
     Column() {
@@ -323,6 +624,10 @@ struct Index1 {
     .backgroundColor(PAGE_BACKGROUND)
   }
 
+  /**
+   * 淘宝直播 surface。XComponent 加载完成后才能拿到 surfaceId，
+   * 再触发 auth + open 流程。
+   */
   @Builder
   taobaoSurface() {
     XComponent({
@@ -352,6 +657,9 @@ struct Index1 {
       })
   }
 
+  /**
+   * 抖音直播 surface。双选但处于外屏时，该 surface 会等展开后再加载并启动。
+   */
   @Builder
   douyinSurface() {
     XComponent({
@@ -381,6 +689,9 @@ struct Index1 {
     })
   }
 
+  /**
+   * 按平台选择实际渲染哪个 XComponent。
+   */
   @Builder
   surfaceForPlatform(platform: LivePlatform) {
     if (platform === LivePlatform.TAOBAO) {
@@ -390,6 +701,9 @@ struct Index1 {
     }
   }
 
+  /**
+   * 直播画面面板，包含视频 surface 和状态浮层。
+   */
   @Builder
   streamPanel(platform: LivePlatform) {
     Stack({ alignContent: Alignment.TopStart }) {
@@ -424,6 +738,9 @@ struct Index1 {
     .backgroundColor(Color.Black)
   }
 
+  /**
+   * 展开屏单选时右侧占位。
+   */
   @Builder
   emptyLivePanel() {
     Column() {
@@ -440,8 +757,34 @@ struct Index1 {
     .backgroundColor('#F1F3F8')
   }
 
+  /**
+   * 直播态停止按钮。使用自绘按钮，避免系统 Button 禁用/默认态覆盖颜色。
+   */
   @Builder
-  livePage() {
+  stopStreamButton() {
+    Row() {
+      Text('停止串流')
+        .fontSize(15)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(Color.White)
+        .maxLines(1)
+    }
+    .height(42)
+    .padding({ left: 18, right: 18 })
+    .justifyContent(FlexAlign.Center)
+    .borderRadius(21)
+    .backgroundColor('#CC20232A')
+    .margin({ right: 20, bottom: 28 })
+    .onClick(() => {
+      this.stopSelectedStreams()
+    })
+  }
+
+  /**
+   * 纯直播内容区：展开屏左右分栏，外屏/窄屏只展示主直播。
+   */
+  @Builder
+  liveContent() {
     if (this.isExpandedScreen()) {
       Row() {
         Column() {
@@ -466,6 +809,20 @@ struct Index1 {
     } else {
       this.streamPanel(this.getPrimaryPlatform())
     }
+  }
+
+  /**
+   * 直播态根布局。停止按钮覆盖在内容右上角，外屏和展开屏都能直接停止。
+   */
+  @Builder
+  livePage() {
+    Stack({ alignContent: Alignment.BottomEnd }) {
+      this.liveContent()
+      this.stopStreamButton()
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(Color.Black)
   }
 
   build() {

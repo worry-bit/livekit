@@ -181,3 +181,47 @@ Mate X7 展开屏截图验证：
 `TAOBAO_PARAMS` 和 `DOUYIN_PARAMS` 仍为占位参数，当前只能验证 UI、串流入口调用和布局状态。后续替换为两套真实 `signalingUrl / boxId / token` 后，可继续验证真实云手机画面。
 
 当前仓库 `build-profile.json5` 仍引用同事机器的 `/Users/mac/.ohos/config/...` 签名路径。本次没有提交任何本机私钥、证书或 profile 文件；模拟器运行使用关闭签名任务后的 HAP 完成安装验证。
+
+## 2026-06-04 追加验证目标
+
+本轮在已跑通 Mate X7 模拟器的基础上继续增加：
+- 外屏/窄屏也能选择淘宝/抖音并开始直播。
+- 直播态增加停止串流入口。
+- 新增 IAM token + KooPhone auth 预留接口调用链。
+- 新增 SDK token 15 秒短有效期下的 3 次自动重试策略。
+- 新增 `docs/koophone-live-debug-guide.md`，用于说明主入口、页面加载、点击链路、串流链路、架构图、时序图和环境问题。
+
+真实 IAM/KooPhone 凭据仍不入库，当前占位配置会触发参数不完整错误，用于验证错误展示和重试保护。
+
+## 2026-06-04 最终构建运行记录
+
+已执行并通过：
+- `ohpm install`
+- `git diff --check`
+- `hvigorw clean assembleApp --no-daemon --stacktrace -p properties.enableSignTask=false`
+- `hdc -t 127.0.0.1:5555 install -r entry/build/default/outputs/default/app/entry-default.hap`
+- `hdc -t 127.0.0.1:5555 shell aa start -b com.hssw.livekit -a EntryAbility`
+- `hdc -t 127.0.0.1:5555 shell ps -ef | rg com.hssw.livekit`
+
+验证截图：
+- `outputs/livekit-auth-selection.jpeg`
+- `outputs/livekit-douyin-selected.jpeg`
+- `outputs/livekit-douyin-live-expanded.jpeg`
+- `outputs/livekit-double-selected.jpeg`
+- `outputs/livekit-double-live-expanded-final.jpeg`
+
+本轮额外修复：
+- `KooAuthService` 将 `http.request()` 包进 `safeRequest()`，消除新增鉴权服务中的 NetworkKit 抛异常 warning。
+- `KooSignalClient` 将 open/connect/send/error 失败统一透传给 `onError`。
+- `KooPhonePlayer` 将非主动信令关闭转换为 `SIGNAL_CONNECT_FAILED`，让页面层三次重试覆盖异常 close。
+- 直播态停止按钮从右上角移动到右下角，避免遮挡右侧直播面板顶部状态。
+
+本地签名处理：
+- 用户已在本机完成 DevEco 自签名。
+- `build-profile.json5` 中出现本机证书路径和加密口令，该文件不纳入功能提交。
+- 本次 CLI 构建仍使用 `properties.enableSignTask=false` 验证，避免把签名配置作为远端仓库依赖。
+
+仍存在的非阻塞 warning：
+- `@ohos/webrtc` 与本地资源存在若干重复资源名 warning。
+- `RTCEngine.ets` 仍有既有 `ESObject` 限制 warning。
+- `AudioManager.ets` 和 `entry/src/main/ets/rtc/LiveKitUtil.ets` 有既有 API deprecated warning。

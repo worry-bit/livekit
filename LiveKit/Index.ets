@@ -48,6 +48,13 @@ export {
   KooPhoneError,
   KooPhoneParams
 } from './src/main/ets/koophone/KooPhoneTypes'
+export type {
+  IamPasswordConfig,
+  KooAuthConfig,
+  KooAuthTokenResult,
+  LivePlatformConfig
+} from './src/main/ets/koophone/KooPhoneTypes'
+export { KooAuthService, createKooAuthService } from './src/main/ets/koophone/KooAuthService'
 export {
   KooInputController,
   TouchAction

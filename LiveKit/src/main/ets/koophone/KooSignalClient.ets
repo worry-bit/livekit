@@ -56,6 +56,7 @@ export class KooSignalClient {
   onStart: ((payload: KooStartPayload) => void) | null = null
   onMessage: ((message: KooSignalMessage) => void) | null = null
   onClosed: (() => void) | null = null
+  onError: ((message: string) => void) | null = null
 
   get isConnected(): boolean {
     return this._connected
@@ -91,6 +92,7 @@ export class KooSignalClient {
     this.ws.on('open', (err: Error) => {
       if (err) {
         console.error('[KooSignalClient] WebSocket open error:', err?.message)
+        this.onError?.(err?.message ?? 'WebSocket open failed')
         return
       }
       console.info('[KooSignalClient] WebSocket opened')
@@ -118,11 +120,14 @@ export class KooSignalClient {
       console.error('[KooSignalClient] WebSocket error:', err?.message)
       this.stopHeartbeat()
       this._connected = false
+      this.onError?.(err?.message ?? 'WebSocket error')
     })
 
     this.ws.connect(wsUrl, (err: Error, success: boolean) => {
       if (!success || err) {
         console.error('[KooSignalClient] Connect failed:', err?.message)
+        this.onError?.(err?.message ?? 'WebSocket connect failed')
+        return
       }
     })
   }
@@ -176,6 +181,7 @@ export class KooSignalClient {
       this.ws = null
     }
     this._connected = false
+    this.onError = null
   }
 
   // ==================== 私有方法 ====================
@@ -264,6 +270,7 @@ export class KooSignalClient {
     this.ws.send(frame, (err: Error, success: boolean) => {
       if (!success) {
         console.error('[KooSignalClient] Send failed:', err?.message)
+        this.onError?.(err?.message ?? 'WebSocket send failed')
       }
     })
   }
