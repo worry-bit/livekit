@@ -54,6 +54,7 @@ export class KooPhonePlayer {
   private streamingId: string = ''
   private sessionId: string = ''
   private uuid: string = ''
+  private currentSurfaceId: string = ''
 
   private signalClient: KooSignalClient = new KooSignalClient()
   private rtcSource: KooRTCSource = new KooRTCSource()
@@ -66,6 +67,15 @@ export class KooPhonePlayer {
 
   get state(): KooPhoneState {
     return this._state
+  }
+
+  /**
+   * 更新远端视频渲染 surface。折叠屏展开/折叠时 XComponent 可能重建，
+   * 调用方可用新 surfaceId 让播放器继续渲染到当前可见区域。
+   */
+  setSurfaceId(surfaceId: string): void {
+    this.currentSurfaceId = surfaceId
+    this.rtcSource.setSurfaceId(surfaceId)
   }
 
   /**
@@ -85,12 +95,13 @@ export class KooPhonePlayer {
     }
 
     this.params = params
+    this.currentSurfaceId = surfaceId
     // 生成会话标识（对应 H5 _open() 中的 streamingid/sessionid/uuid）
     this.streamingId = this.randomUuid()
     this.sessionId = params.sessionId ?? params.token
     this.uuid = params.uuid ?? this.randomUuid()
 
-    this.setupSignalHandlers(surfaceId)
+    this.setupSignalHandlers()
     this.setupRTCHandlers()
 
     this.stateChange(KooPhoneState.CONNECTING)
@@ -121,6 +132,7 @@ export class KooPhonePlayer {
     this.streamingId = ''
     this.sessionId = ''
     this.uuid = ''
+    this.currentSurfaceId = ''
     this.params = null
 
     this.stateChange(KooPhoneState.CLOSED)
@@ -129,7 +141,7 @@ export class KooPhonePlayer {
 
   // ==================== 私有方法 ====================
 
-  private setupSignalHandlers(surfaceId: string): void {
+  private setupSignalHandlers(): void {
     this.signalClient.onAuthorize = (authorized: boolean) => {
       if (!authorized) {
         this.emitError(KooPhoneError.SIGNAL_AUTH_FAILED, 'Signal authorization failed')
@@ -153,7 +165,7 @@ export class KooPhonePlayer {
       // 初始化 RTCPeerConnection
       this.stateChange(KooPhoneState.PEER_CONNECTING)
       this.rtcSource.open(this.params?.iceServers ?? [])
-      this.rtcSource.setSurfaceId(surfaceId)
+      this.rtcSource.setSurfaceId(this.currentSurfaceId)
 
       // 发送 init 请求触发 boxrtc 开始 WebRTC 协商
       this.sendInit()
