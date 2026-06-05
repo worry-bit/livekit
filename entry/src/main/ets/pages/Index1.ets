@@ -10,7 +10,9 @@ import {
   KooAuthTokenResult,
   KooInstancePoolEntry,
   LivePlatformConfig,
+  canStartKooLiveAddSelection,
   selectNextAvailableKooInstance,
+  shouldShowKooLiveAddPanel,
   TouchAction,
   TouchPoint
 } from 'livekit-harmony'
@@ -113,6 +115,8 @@ struct Index1 {
   @State taobaoErrorText: string = ''
   @State douyinErrorText: string = ''
   @State foldedVisiblePlatform: LivePlatform = LivePlatform.TAOBAO
+  @State pendingAddTaobao: boolean = false
+  @State pendingAddDouyin: boolean = false
 
   aboutToAppear(): void {
     this.taobaoPlayer.onStateChange = (s: KooPhoneState) => {
@@ -206,6 +210,7 @@ struct Index1 {
       return
     }
 
+    this.clearPendingAddSelection()
     this.resetPlatformRuntime(LivePlatform.TAOBAO)
     this.resetPlatformRuntime(LivePlatform.DOUYIN)
     this.shouldStartTaobao = this.selectedTaobao
@@ -285,6 +290,7 @@ struct Index1 {
     this.douyinTriedInstanceIds = []
     this.taobaoInstanceId = TAOBAO_INSTANCE_ID
     this.douyinInstanceId = DOUYIN_INSTANCE_ID
+    this.clearPendingAddSelection()
   }
 
   private resetPlatformRuntime(platform: LivePlatform): void {
@@ -460,6 +466,105 @@ struct Index1 {
     this.douyinRetryTimer = timer
   }
 
+  private clearPendingAddSelection(): void {
+    this.pendingAddTaobao = false
+    this.pendingAddDouyin = false
+  }
+
+  private isPlatformPendingAdd(platform: LivePlatform): boolean {
+    return platform === LivePlatform.TAOBAO ? this.pendingAddTaobao : this.pendingAddDouyin
+  }
+
+  private setPlatformPendingAdd(platform: LivePlatform, pending: boolean): void {
+    if (platform === LivePlatform.TAOBAO) {
+      this.pendingAddTaobao = pending
+      return
+    }
+    this.pendingAddDouyin = pending
+  }
+
+  /**
+   * 内屏补开面板里的临时选择。已选择或已直播的平台置灰锁定，
+   * 只有另一未直播平台可以被选中并启动。
+   */
+  private togglePendingAddPlatform(platform: LivePlatform): void {
+    if (this.isLiveAddOptionDisabled(platform)) {
+      return
+    }
+
+    const nextPending = !this.isPlatformPendingAdd(platform)
+    this.clearPendingAddSelection()
+    this.setPlatformPendingAdd(platform, nextPending)
+  }
+
+  private isLiveAddOptionDisabled(platform: LivePlatform): boolean {
+    return this.isPlatformSelected(platform) || this.isPlatformLiveActive(platform)
+  }
+
+  private hasAnyPlatformLiveActive(): boolean {
+    return this.isPlatformLiveActive(LivePlatform.TAOBAO) || this.isPlatformLiveActive(LivePlatform.DOUYIN)
+  }
+
+  private shouldShowAdditionalSelection(platform: LivePlatform): boolean {
+    return shouldShowKooLiveAddPanel({
+      isExpandedScreen: this.isExpandedScreen(),
+      isSlotLiveActive: this.isPlatformLiveActive(platform),
+      isSlotFailed: this.isPlatformFailed(platform),
+      hasAnyLiveActive: this.hasAnyPlatformLiveActive(),
+      isPendingAdd: this.isPlatformPendingAdd(platform)
+    })
+  }
+
+  private canStartAdditionalSelection(platform: LivePlatform): boolean {
+    return canStartKooLiveAddSelection({
+      isExpandedScreen: this.isExpandedScreen(),
+      isSlotLiveActive: this.isPlatformLiveActive(platform),
+      isSlotFailed: this.isPlatformFailed(platform),
+      hasAnyLiveActive: this.hasAnyPlatformLiveActive(),
+      isPendingAdd: this.isPlatformPendingAdd(platform)
+    })
+  }
+
+  private getPreferredInstanceId(platform: LivePlatform): string {
+    return platform === LivePlatform.TAOBAO ? TAOBAO_INSTANCE_ID : DOUYIN_INSTANCE_ID
+  }
+
+  private setPlatformSelected(platform: LivePlatform, selected: boolean): void {
+    if (platform === LivePlatform.TAOBAO) {
+      this.selectedTaobao = selected
+      return
+    }
+    this.selectedDouyin = selected
+  }
+
+  /**
+   * 给补开的单个平台分配初始实例。不会重置另一侧正在播放的平台，
+   * 避免补开时破坏现有串流。
+   */
+  private assignInitialInstanceForPlatform(platform: LivePlatform): void {
+    const instanceId = this.resolveInitialInstance(platform, this.getPreferredInstanceId(platform))
+    this.setPlatformInstanceId(platform, instanceId)
+    this.addTriedInstance(platform, instanceId)
+  }
+
+  /**
+   * 内屏空半屏点击“开始直播”后的入口。这里只启动当前空槽位对应平台；
+   * 外屏不显示该入口，已有直播也不会被重新 open。
+   */
+  private startAdditionalPlatform(platform: LivePlatform): void {
+    if (!this.canStartAdditionalSelection(platform)) {
+      return
+    }
+
+    this.resetPlatformRuntime(platform)
+    this.setPlatformSelected(platform, true)
+    this.setShouldStartPlatform(platform, true)
+    this.assignInitialInstanceForPlatform(platform)
+    this.setPlatformPendingAdd(platform, false)
+    this.isLiveStarted = true
+    this.startPlatformIfReady(platform)
+  }
+
   private setShouldStartPlatform(platform: LivePlatform, shouldStart: boolean): void {
     if (platform === LivePlatform.TAOBAO) {
       this.shouldStartTaobao = shouldStart
@@ -605,6 +710,7 @@ struct Index1 {
     this.setPlatformRetryCount(platform, 0)
     this.setPlatformErrorText(platform, '')
     this.setPlatformStateText(platform, 'NEW')
+    this.setPlatformPendingAdd(platform, false)
     if (platform === LivePlatform.TAOBAO) {
       this.taobaoPlaying = false
       this.taobaoPlayer.close()
@@ -856,6 +962,115 @@ struct Index1 {
     .onClick(() => {
       this.togglePlatform(platform)
     })
+  }
+
+  /**
+   * 内屏补开面板的选项圆点。已直播/已选择的平台使用灰色锁定态；
+   * 用户正在补选的平台使用红色选中态。
+   */
+  @Builder
+  liveAddIndicator(platform: LivePlatform, disabled: boolean) {
+    Stack({ alignContent: Alignment.Center }) {
+      Text('')
+        .width(26)
+        .height(26)
+        .border({
+          width: 1.4,
+          color: disabled ? '#C5CAD4' : (this.isPlatformPendingAdd(platform) ? LIVE_RED : '#AAB1BD')
+        })
+        .borderRadius(13)
+        .backgroundColor(Color.Transparent)
+
+      if (this.isPlatformPendingAdd(platform) && !disabled) {
+        Text('')
+          .width(12)
+          .height(12)
+          .borderRadius(6)
+          .backgroundColor(LIVE_RED)
+      }
+    }
+    .width(30)
+    .height(30)
+  }
+
+  /**
+   * 内屏空半屏的补开选项。和初始选择页保持同样的两行结构，
+   * 但已选择过的直播平台置灰且不可点击。
+   */
+  @Builder
+  liveAddPlatformOption(platform: LivePlatform) {
+    Row({ space: 16 }) {
+      this.liveAddIndicator(platform, this.isLiveAddOptionDisabled(platform))
+
+      Text(this.getPlatformTitle(platform))
+        .fontSize(18)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(this.isLiveAddOptionDisabled(platform) ? '#A8AFBA' : TEXT_PRIMARY)
+        .maxLines(1)
+    }
+    .width('100%')
+    .height(66)
+    .padding({ left: 24, right: 22 })
+    .backgroundColor(this.isLiveAddOptionDisabled(platform) ? '#ECEFF5' : ROW_BACKGROUND)
+    .borderRadius(4)
+    .alignItems(VerticalAlign.Center)
+    .onClick(() => {
+      this.togglePendingAddPlatform(platform)
+    })
+  }
+
+  /**
+   * 展开屏单路直播时，另一半屏显示的补开选择页。
+   * 外屏不渲染这个 Builder，用户需要展开 Mate X7 后才能补开第二路。
+   */
+  @Builder
+  liveAddSelectionPanel(slotPlatform: LivePlatform) {
+    Column() {
+      Text('开始直播')
+        .fontSize(24)
+        .fontWeight(FontWeight.Bold)
+        .fontColor(TEXT_PRIMARY)
+        .width('100%')
+
+      Text('请选择直播平台')
+        .fontSize(20)
+        .fontColor(TEXT_SECONDARY)
+        .width('100%')
+        .textAlign(TextAlign.Center)
+        .margin({ top: 86, bottom: 24 })
+
+      Column({ space: 18 }) {
+        this.liveAddPlatformOption(LivePlatform.TAOBAO)
+        this.liveAddPlatformOption(LivePlatform.DOUYIN)
+      }
+      .width('100%')
+
+      Blank()
+
+      Row() {
+        Blank()
+        Row() {
+          Text('开始直播')
+            .fontSize(16)
+            .fontWeight(FontWeight.Medium)
+            .fontColor(Color.White)
+            .maxLines(1)
+        }
+        .width(136)
+        .height(48)
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(this.canStartAdditionalSelection(slotPlatform) ? LIVE_RED : DISABLED_BUTTON)
+        .borderRadius(24)
+        .onClick(() => {
+          this.startAdditionalPlatform(slotPlatform)
+        })
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .height('100%')
+    .padding({ top: 50, left: 40, right: 40, bottom: 34 })
+    .backgroundColor(PAGE_BACKGROUND)
   }
 
   /**
@@ -1145,6 +1360,8 @@ struct Index1 {
   platformLiveSlot(platform: LivePlatform) {
     if (this.isPlatformLiveActive(platform)) {
       this.streamPanel(platform)
+    } else if (this.shouldShowAdditionalSelection(platform)) {
+      this.liveAddSelectionPanel(platform)
     } else {
       this.emptyLivePanel(platform)
     }

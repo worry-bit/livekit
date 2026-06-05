@@ -1,6 +1,7 @@
 import { describe, beforeAll, beforeEach, afterEach, afterAll, it, expect } from '@ohos/hypium';
 import { parseKooInstanceAuthResponse } from '../main/ets/koophone/KooAuthParser';
 import { KooInstancePoolEntry, selectNextAvailableKooInstance } from '../main/ets/koophone/KooInstancePool';
+import { canStartKooLiveAddSelection, shouldShowKooLiveAddPanel } from '../main/ets/koophone/KooLiveSlotPolicy';
 
 export default function localUnitTest() {
   describe('localUnitTest', () => {
@@ -115,6 +116,64 @@ export default function localUnitTest() {
       });
 
       expect(result).assertEqual('backup-001');
+    });
+  });
+
+  describe('KooPhone expanded live add panel policy', () => {
+    it('showsAddPanelOnlyForExpandedInactiveSlotWithAnotherActiveStream', 0, () => {
+      const visible = shouldShowKooLiveAddPanel({
+        isExpandedScreen: true,
+        isSlotLiveActive: false,
+        isSlotFailed: false,
+        hasAnyLiveActive: true,
+        isPendingAdd: false
+      });
+
+      expect(visible).assertEqual(true);
+    });
+
+    it('doesNotShowAddPanelOnFoldedScreen', 0, () => {
+      const visible = shouldShowKooLiveAddPanel({
+        isExpandedScreen: false,
+        isSlotLiveActive: false,
+        isSlotFailed: false,
+        hasAnyLiveActive: true,
+        isPendingAdd: false
+      });
+
+      expect(visible).assertEqual(false);
+    });
+
+    it('doesNotShowAddPanelForFailedSlot', 0, () => {
+      const visible = shouldShowKooLiveAddPanel({
+        isExpandedScreen: true,
+        isSlotLiveActive: false,
+        isSlotFailed: true,
+        hasAnyLiveActive: true,
+        isPendingAdd: false
+      });
+
+      expect(visible).assertEqual(false);
+    });
+
+    it('startsAdditionalSelectionOnlyAfterUserChoosesInactivePlatform', 0, () => {
+      const disabled = canStartKooLiveAddSelection({
+        isExpandedScreen: true,
+        isSlotLiveActive: false,
+        isSlotFailed: false,
+        hasAnyLiveActive: true,
+        isPendingAdd: false
+      });
+      const enabled = canStartKooLiveAddSelection({
+        isExpandedScreen: true,
+        isSlotLiveActive: false,
+        isSlotFailed: false,
+        hasAnyLiveActive: true,
+        isPendingAdd: true
+      });
+
+      expect(disabled).assertEqual(false);
+      expect(enabled).assertEqual(true);
     });
   });
 }

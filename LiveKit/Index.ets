@@ -65,6 +65,11 @@ export type {
   KooInstanceSelectionInput
 } from './src/main/ets/koophone/KooInstancePool'
 export {
+  canStartKooLiveAddSelection,
+  shouldShowKooLiveAddPanel
+} from './src/main/ets/koophone/KooLiveSlotPolicy'
+export type { KooLiveAddSlotState } from './src/main/ets/koophone/KooLiveSlotPolicy'
+export {
   KooInputController,
   TouchAction
 } from './src/main/ets/koophone/KooInputController'

@@ -22,6 +22,7 @@ flowchart TD
   Ability["EntryAbility\nUIAbility 生命周期"]
   Page["Index1.ets\n折叠屏选择页/直播页"]
   Pool["KooInstancePool\n共享实例池选择策略"]
+  SlotPolicy["KooLiveSlotPolicy\n内屏补开面板策略"]
   Auth["KooAuthService\nIAM token + KooPhone auth"]
   PlayerA["KooPhonePlayer\n淘宝实例"]
   PlayerB["KooPhonePlayer\n抖音实例"]
@@ -32,6 +33,7 @@ flowchart TD
 
   Ability -->|"loadContent('pages/Index1')"| Page
   Page -->|"selectNextAvailableKooInstance()"| Pool
+  Page -->|"shouldShowKooLiveAddPanel()"| SlotPolicy
   Page -->|"startPlatformIfReady()"| Auth
   Page -->|"open(params, surfaceId)"| PlayerA
   Page -->|"open(params, surfaceId)"| PlayerB
@@ -80,6 +82,25 @@ platformOption(platform, title)
 ```
 
 `startSelectedStreams()` 不直接串流，因为这时 `XComponent` 可能还没有拿到 `surfaceId`。真正调用 SDK 的地方是 `startPlatformIfReady(platform)`。
+
+内屏补开第二路直播链路：
+
+```text
+展开屏单路直播
+  -> platformLiveSlot(未直播平台)
+  -> shouldShowAdditionalSelection(platform)
+  -> liveAddSelectionPanel(platform)
+  -> liveAddPlatformOption()
+  -> togglePendingAddPlatform(platform)
+  -> 开始直播按钮根据 canStartAdditionalSelection(platform) 变灰或变红
+  -> startAdditionalPlatform(platform)
+  -> resetPlatformRuntime(platform)
+  -> assignInitialInstanceForPlatform(platform)
+  -> shouldStartPlatform = true
+  -> streamPanel(platform)
+  -> XComponent.onLoad()
+  -> startPlatformIfReady(platform)
+```
 
 ## 4. 串流鉴权和 open 流程
 
@@ -148,7 +169,9 @@ KooPhone 实例鉴权响应字段映射：
 开始直播后：
 
 - 展开屏：`liveContent()` 使用固定左右槽位，左侧固定淘宝，右侧固定抖音。
-- 单路停止、失败或未启动时，对应槽位显示“暂无直播内容”或失败信息，另一槽位不受影响。
+- 单路直播且展开内屏时，未直播半屏显示和初始页一致的补开选择页；已直播/已选择的平台置灰不可点，另一平台可以选择后开始串流。
+- 外屏单路直播时不显示补开选择页；必须展开 Mate X7 内屏后，才能在未直播半屏选择第二路。
+- 单路停止、失败或未启动但不满足补开条件时，对应槽位显示“暂无直播内容”或失败信息，另一槽位不受影响。
 - 外屏/窄屏：只展示 `foldedVisiblePlatform` 对应的一路；如果当前可见平台停止或失败，`getFoldedDisplayPlatform()` 自动回落到另一活跃平台。
 - 外屏双路都处于直播态时，左上角显示“切换直播”按钮。点击只改外屏可见平台，不改变展开屏左淘宝、右抖音布局。
 - 每个 `streamPanel(platform)` 内部都有独立“停止直播”按钮，点击后只关闭当前平台播放器和该路重试定时器。
