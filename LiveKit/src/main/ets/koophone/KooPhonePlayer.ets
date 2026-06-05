@@ -114,7 +114,7 @@ export class KooPhonePlayer {
     query += `&streamingid=${this.streamingId}`
     this.signalClient.connect(params.signalingUrl, query)
 
-    console.info('[KooPhonePlayer] Opening, boxId:', params.boxId)
+    console.info('[KooPhonePlayer] Opening, boxId:', this.maskId(params.boxId))
   }
 
   /**
@@ -265,16 +265,23 @@ export class KooPhonePlayer {
 
     // base64 编码（与 H5 btoa(JSON.stringify(params)) 一致）
     const jsonStr = JSON.stringify(initPayload)
-    console.info('[KooPhonePlayer] Init payload JSON:', jsonStr)
+    console.info('[KooPhonePlayer] Init payload prepared, jsonLength:', jsonStr.length,
+      'sessionId:', this.maskId(this.sessionId), 'streamingId:', this.maskId(this.streamingId))
     const encoder = new util.TextEncoder()
     const bytes = encoder.encodeInto(jsonStr)
     const base64Helper = new util.Base64Helper()
     const encoded = base64Helper.encodeToStringSync(bytes)
-    console.info('[KooPhonePlayer] Init payload base64:', encoded)
 
     console.info('[KooPhonePlayer] Sending init, remoteId:', this.remoteId,
-      'uuid:', this.uuid, 'streamingId:', this.streamingId)
+      'uuid:', this.maskId(this.uuid), 'streamingId:', this.maskId(this.streamingId))
     this.signalClient.emitData('init', this.remoteId, encoded)
+  }
+
+  private maskId(value: string): string {
+    if (value.length <= 8) {
+      return '***'
+    }
+    return `${value.substring(0, 4)}...${value.substring(value.length - 4)}`
   }
 
   private handleSignalMessage(message: KooSignalMessage): void {

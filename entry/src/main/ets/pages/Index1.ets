@@ -19,16 +19,21 @@ enum LivePlatform {
 }
 
 const KOOPHONE_AUTH_HOST = 'http://100.93.2.248:8669'
+const IAM_AUTH_URL = 'https://iam.cn-north-7.myhuaweicloud.com/v3/auth/tokens'
+const IAM_DOMAIN_NAME = '__IAM_DOMAIN_NAME__'
+const IAM_USER_NAME = '__IAM_USER_NAME__'
+const IAM_PASSWORD = '__IAM_PASSWORD__'
+const IAM_PROJECT_NAME = 'cn-north-7'
 const TAOBAO_INSTANCE_ID = 'dhb4q9j4'
 const DOUYIN_INSTANCE_ID = 'sKuBZq7c'
 
 const TAOBAO_CONFIG: LivePlatformConfig = {
   iam: {
-    authUrl: 'https://iam.myhuaweicloud.com/v3/auth/tokens',
-    domainName: '',
-    userName: '',
-    password: '',
-    projectName: ''
+    authUrl: IAM_AUTH_URL,
+    domainName: IAM_DOMAIN_NAME,
+    userName: IAM_USER_NAME,
+    password: IAM_PASSWORD,
+    projectName: IAM_PROJECT_NAME
   },
   kooAuth: {
     authUrl: `${KOOPHONE_AUTH_HOST}/openapi/koophone/v1/instances/${TAOBAO_INSTANCE_ID}/auth`,
@@ -39,11 +44,11 @@ const TAOBAO_CONFIG: LivePlatformConfig = {
 
 const DOUYIN_CONFIG: LivePlatformConfig = {
   iam: {
-    authUrl: 'https://iam.myhuaweicloud.com/v3/auth/tokens',
-    domainName: '',
-    userName: '',
-    password: '',
-    projectName: ''
+    authUrl: IAM_AUTH_URL,
+    domainName: IAM_DOMAIN_NAME,
+    userName: IAM_USER_NAME,
+    password: IAM_PASSWORD,
+    projectName: IAM_PROJECT_NAME
   },
   kooAuth: {
     authUrl: `${KOOPHONE_AUTH_HOST}/openapi/koophone/v1/instances/${DOUYIN_INSTANCE_ID}/auth`,
@@ -98,8 +103,7 @@ struct Index1 {
 
   aboutToAppear(): void {
     this.taobaoPlayer.onStateChange = (s: KooPhoneState) => {
-      this.taobaoStateText = s
-      this.taobaoPlaying = (s === KooPhoneState.PLAYING)
+      this.handlePlatformStateChange(LivePlatform.TAOBAO, s)
     }
 
     this.taobaoPlayer.onError = (code: KooPhoneError, msg: string) => {
@@ -111,8 +115,7 @@ struct Index1 {
     }
 
     this.douyinPlayer.onStateChange = (s: KooPhoneState) => {
-      this.douyinStateText = s
-      this.douyinPlaying = (s === KooPhoneState.PLAYING)
+      this.handlePlatformStateChange(LivePlatform.DOUYIN, s)
     }
 
     this.douyinPlayer.onError = (code: KooPhoneError, msg: string) => {
@@ -415,6 +418,33 @@ struct Index1 {
   }
 
   /**
+   * 同步播放器状态到页面状态。进入 PLAYING 后清空本轮启动重试计数；
+   * 如果已启动后异常 CLOSED，则兜底触发页面重试，避免底层只抛状态不抛错误。
+   */
+  private handlePlatformStateChange(platform: LivePlatform, state: KooPhoneState): void {
+    this.setPlatformStateText(platform, state)
+    const isPlaying = state === KooPhoneState.PLAYING
+    if (platform === LivePlatform.TAOBAO) {
+      this.taobaoPlaying = isPlaying
+    } else {
+      this.douyinPlaying = isPlaying
+    }
+
+    if (isPlaying) {
+      this.setPlatformRetryCount(platform, 0)
+      this.setPlatformErrorText(platform, '')
+      return
+    }
+
+    if (state === KooPhoneState.CLOSED &&
+      this.shouldStartPlatform(platform) &&
+      this.isPlatformStarted(platform) &&
+      !this.isPlatformStarting(platform)) {
+      this.schedulePlatformRetry(platform, 'KooPhone player closed unexpectedly')
+    }
+  }
+
+  /**
    * 接收播放器底层错误并交给重试调度。双选时每个平台独立处理，
    * 一路失败不会影响另一路已启动或正在重试的串流。
    */
@@ -437,9 +467,9 @@ struct Index1 {
     }
 
     this.clearRetryTimer(platform)
-    this.getPlatformPlayer(platform).close()
     this.setPlatformStarted(platform, false)
     this.setPlatformStarting(platform, false)
+    this.getPlatformPlayer(platform).close()
 
     const currentRetryCount = this.getRetryCount(platform)
     if (currentRetryCount >= MAX_STREAM_RETRY) {

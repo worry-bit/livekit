@@ -73,9 +73,12 @@ export class KooAuthService {
     try {
       const body = this.buildIamTokenRequest(config)
       console.info('[KooAuthService] Requesting IAM token')
-      const res = await this.safeRequest(req, `${config.authUrl}?nocatalog=true`, {
+      const res = await this.safeRequest(req, config.authUrl, {
         method: http.RequestMethod.POST,
-        header: { 'Content-Type': 'application/json;charset=utf8' },
+        header: {
+          'Content-Type': 'application/json',
+          'nocatalog': 'true'
+        },
         extraData: JSON.stringify(body),
         connectTimeout: DEFAULT_CONNECT_TIMEOUT_MS,
         readTimeout: DEFAULT_READ_TIMEOUT_MS
@@ -154,7 +157,10 @@ export class KooAuthService {
   }
 
   private assertIamConfig(config: IamPasswordConfig): void {
-    if (!config.authUrl || !config.domainName || !config.userName || !config.password) {
+    if (!config.authUrl ||
+      this.isPlaceholder(config.domainName) ||
+      this.isPlaceholder(config.userName) ||
+      this.isPlaceholder(config.password)) {
       throw new Error('IAM config is incomplete')
     }
   }
@@ -205,6 +211,10 @@ export class KooAuthService {
     }
 
     return headerText.substring(startQuoteIndex + 1, endQuoteIndex)
+  }
+
+  private isPlaceholder(value: string): boolean {
+    return value.length === 0 || (value.startsWith('__') && value.endsWith('__'))
   }
 
   private maskKooAuthUrl(url: string): string {

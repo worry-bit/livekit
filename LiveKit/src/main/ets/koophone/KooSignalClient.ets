@@ -85,7 +85,7 @@ export class KooSignalClient {
 
     // 拼接 Socket.IO v2 握手 URL：固定用 ? 分隔，/socket.io/ 路径后不含已有参数
     const wsUrl = `${baseUrl}/socket.io/?EIO=3&transport=websocket&${query}`
-    console.info('[KooSignalClient] Connecting:', wsUrl)
+    console.info('[KooSignalClient] Connecting:', this.maskSignalUrl(wsUrl))
 
     this.ws = webSocket.createWebSocket()
 
@@ -139,7 +139,7 @@ export class KooSignalClient {
   emitStart(boxId: string, times: number = 0): void {
     const payload: StartFramePayload = { room: boxId, times }
     const frame = `42["start",${JSON.stringify(payload)}]`
-    console.info('[KooSignalClient] Sent start frame:', frame)
+    console.info('[KooSignalClient] Sent start frame, room:', this.maskId(boxId), 'times:', times)
     this.sendFrame(frame)
   }
 
@@ -150,8 +150,39 @@ export class KooSignalClient {
     const payload: DataFramePayload = { to, type, data }
     const msg = JSON.stringify(payload)
     const frame = `42["message",${msg}]`
-    console.info('[KooSignalClient] emitData frame:', frame.substring(0, 200))
+    console.info('[KooSignalClient] emitData frame, type:', type, 'to:', this.maskId(to), 'dataLength:', data.length)
     this.sendFrame(frame)
+  }
+
+  private maskSignalUrl(url: string): string {
+    let result = url
+    result = this.maskQueryParam(result, 'boxid')
+    result = this.maskQueryParam(result, 'token')
+    result = this.maskQueryParam(result, 'sessionid')
+    result = this.maskQueryParam(result, 'streamingid')
+    return result
+  }
+
+  private maskQueryParam(input: string, key: string): string {
+    const marker = `${key}=`
+    const valueStart = input.indexOf(marker)
+    if (valueStart < 0) {
+      return input
+    }
+
+    const valueIndex = valueStart + marker.length
+    const ampIndex = input.indexOf('&', valueIndex)
+    if (ampIndex < 0) {
+      return `${input.substring(0, valueIndex)}***`
+    }
+    return `${input.substring(0, valueIndex)}***${input.substring(ampIndex)}`
+  }
+
+  private maskId(value: string): string {
+    if (value.length <= 8) {
+      return '***'
+    }
+    return `${value.substring(0, 4)}...${value.substring(value.length - 4)}`
   }
 
   /**
