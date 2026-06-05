@@ -1,5 +1,6 @@
 export interface KooLiveAddSlotState {
   isExpandedScreen: boolean
+  isFoldedVisibleStoppedSlot: boolean
   isSlotLiveActive: boolean
   isSlotFailed: boolean
   hasAnyLiveActive: boolean
@@ -8,10 +9,10 @@ export interface KooLiveAddSlotState {
 
 /**
  * 判断展开屏未直播半屏是否应展示补开直播选择页。
- * 外屏不展示该面板；只有内屏且另一侧仍有直播时，空半屏才允许补选另一路。
+ * 内屏空半屏可补选；外屏只有“当前可见直播被用户停止且另一侧仍在播”时才展示。
  */
 export function shouldShowKooLiveAddPanel(state: KooLiveAddSlotState): boolean {
-  return state.isExpandedScreen &&
+  return (state.isExpandedScreen || state.isFoldedVisibleStoppedSlot) &&
     !state.isSlotLiveActive &&
     !state.isSlotFailed &&
     state.hasAnyLiveActive

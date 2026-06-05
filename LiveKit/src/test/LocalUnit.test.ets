@@ -128,6 +128,7 @@ export default function localUnitTest() {
     it('showsAddPanelOnlyForExpandedInactiveSlotWithAnotherActiveStream', 0, () => {
       const visible = shouldShowKooLiveAddPanel({
         isExpandedScreen: true,
+        isFoldedVisibleStoppedSlot: false,
         isSlotLiveActive: false,
         isSlotFailed: false,
         hasAnyLiveActive: true,
@@ -140,6 +141,7 @@ export default function localUnitTest() {
     it('doesNotShowAddPanelOnFoldedScreen', 0, () => {
       const visible = shouldShowKooLiveAddPanel({
         isExpandedScreen: false,
+        isFoldedVisibleStoppedSlot: false,
         isSlotLiveActive: false,
         isSlotFailed: false,
         hasAnyLiveActive: true,
@@ -152,6 +154,7 @@ export default function localUnitTest() {
     it('doesNotShowAddPanelForFailedSlot', 0, () => {
       const visible = shouldShowKooLiveAddPanel({
         isExpandedScreen: true,
+        isFoldedVisibleStoppedSlot: false,
         isSlotLiveActive: false,
         isSlotFailed: true,
         hasAnyLiveActive: true,
@@ -164,6 +167,7 @@ export default function localUnitTest() {
     it('startsAdditionalSelectionOnlyAfterUserChoosesInactivePlatform', 0, () => {
       const disabled = canStartKooLiveAddSelection({
         isExpandedScreen: true,
+        isFoldedVisibleStoppedSlot: false,
         isSlotLiveActive: false,
         isSlotFailed: false,
         hasAnyLiveActive: true,
@@ -171,6 +175,7 @@ export default function localUnitTest() {
       });
       const enabled = canStartKooLiveAddSelection({
         isExpandedScreen: true,
+        isFoldedVisibleStoppedSlot: false,
         isSlotLiveActive: false,
         isSlotFailed: false,
         hasAnyLiveActive: true,
@@ -179,6 +184,32 @@ export default function localUnitTest() {
 
       expect(disabled).assertEqual(false);
       expect(enabled).assertEqual(true);
+    });
+
+    it('showsAddPanelForFoldedStoppedVisibleSlot', 0, () => {
+      const visible = shouldShowKooLiveAddPanel({
+        isExpandedScreen: false,
+        isFoldedVisibleStoppedSlot: true,
+        isSlotLiveActive: false,
+        isSlotFailed: false,
+        hasAnyLiveActive: true,
+        isPendingAdd: false
+      });
+
+      expect(visible).assertEqual(true);
+    });
+
+    it('keepsSingleFoldedLiveFromShowingAddPanel', 0, () => {
+      const visible = shouldShowKooLiveAddPanel({
+        isExpandedScreen: false,
+        isFoldedVisibleStoppedSlot: false,
+        isSlotLiveActive: false,
+        isSlotFailed: false,
+        hasAnyLiveActive: true,
+        isPendingAdd: false
+      });
+
+      expect(visible).assertEqual(false);
     });
 
     it('enablesStoppedPlatformEvenIfItWasSelectedBefore', 0, () => {

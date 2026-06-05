@@ -76,7 +76,7 @@ const TEXT_SECONDARY = '#6A7280'
 const DISABLED_BUTTON = '#D7DBE3'
 const LIVE_RED = '#E53935'
 const OVERLAY_BACKGROUND = '#4D000000'
-const CONTROL_BACKGROUND = '#4D20232A'
+const FOLDED_SWITCH_GREEN = '#2EAD5B'
 
 @Entry
 @Component
@@ -514,6 +514,7 @@ struct Index1 {
   private shouldShowAdditionalSelection(platform: LivePlatform): boolean {
     return shouldShowKooLiveAddPanel({
       isExpandedScreen: this.isExpandedScreen(),
+      isFoldedVisibleStoppedSlot: this.isFoldedVisibleStoppedSlot(platform),
       isSlotLiveActive: this.isPlatformLiveActive(platform),
       isSlotFailed: this.isPlatformFailed(platform),
       hasAnyLiveActive: this.hasAnyPlatformLiveActive(),
@@ -524,11 +525,23 @@ struct Index1 {
   private canStartAdditionalSelection(platform: LivePlatform): boolean {
     return canStartKooLiveAddSelection({
       isExpandedScreen: this.isExpandedScreen(),
+      isFoldedVisibleStoppedSlot: this.isFoldedVisibleStoppedSlot(platform),
       isSlotLiveActive: this.isPlatformLiveActive(platform),
       isSlotFailed: this.isPlatformFailed(platform),
       hasAnyLiveActive: this.hasAnyPlatformLiveActive(),
       isPendingAdd: this.isPlatformPendingAdd(platform)
     })
+  }
+
+  /**
+   * 外屏双路直播时，用户停止当前可见直播后不自动跳到另一直播；
+   * 当前可见槽位转为补开选择页，另一直播在选项中置灰标注“正在直播中”。
+   */
+  private isFoldedVisibleStoppedSlot(platform: LivePlatform): boolean {
+    return !this.isExpandedScreen() &&
+      this.foldedVisiblePlatform === platform &&
+      !this.isPlatformLiveActive(platform) &&
+      this.hasAnyPlatformLiveActive()
   }
 
   private getPreferredInstanceId(platform: LivePlatform): string {
@@ -709,6 +722,8 @@ struct Index1 {
    * 选择态保留；如果两路都停止，则回到选择页。
    */
   private stopPlatformStream(platform: LivePlatform): void {
+    const wasFoldedScreen = !this.isExpandedScreen()
+    const wasBothPlatformsLiveActive = this.isBothPlatformsLiveActive()
     this.clearRetryTimer(platform)
     this.setShouldStartPlatform(platform, false)
     this.setPlatformStarted(platform, false)
@@ -725,7 +740,12 @@ struct Index1 {
       this.douyinPlayer.close()
     }
 
-    this.ensureFoldedVisiblePlatform()
+    if (wasFoldedScreen && wasBothPlatformsLiveActive) {
+      this.foldedVisiblePlatform = platform
+      this.clearPendingAddSelection()
+    } else {
+      this.ensureFoldedVisiblePlatform()
+    }
     if (!this.shouldStartTaobao && !this.shouldStartDouyin) {
       this.isLiveStarted = false
     }
@@ -747,6 +767,10 @@ struct Index1 {
     return !this.isExpandedScreen() && this.isBothPlatformsLiveActive()
   }
 
+  private isFoldedVisiblePlatform(platform: LivePlatform): boolean {
+    return this.getFoldedDisplayPlatform() === platform
+  }
+
   /**
    * 外屏实际显示哪一路：优先使用用户手动切到的平台；
    * 如果该平台已停止或失败，则自动回落到仍在直播的另一路。
@@ -766,6 +790,18 @@ struct Index1 {
   }
 
   /**
+   * 外屏槽位选择：双路直播时显示当前切换平台；停止当前直播后，
+   * 保持在被停止的平台并展示补开选择页，而不是自动显示另一直播。
+   */
+  private getFoldedSlotPlatform(): LivePlatform {
+    if (this.isPlatformLiveActive(this.foldedVisiblePlatform) ||
+      this.shouldShowAdditionalSelection(this.foldedVisiblePlatform)) {
+      return this.foldedVisiblePlatform
+    }
+    return this.getFoldedDisplayPlatform()
+  }
+
+  /**
    * 外屏切换只修改 foldedVisiblePlatform，不修改 shouldStart 或选择态，
    * 因此展开后仍保持左淘宝、右抖音的固定布局。
    */
@@ -776,6 +812,7 @@ struct Index1 {
     this.foldedVisiblePlatform = this.foldedVisiblePlatform === LivePlatform.TAOBAO ?
       LivePlatform.DOUYIN :
       LivePlatform.TAOBAO
+    this.getPlatformPlayer(this.foldedVisiblePlatform).setSurfaceId(this.getPlatformSurfaceId(this.foldedVisiblePlatform))
   }
 
   /**
@@ -1224,25 +1261,25 @@ struct Index1 {
   streamStatusOverlay(platform: LivePlatform) {
     Column({ space: 2 }) {
       Text(this.getPlatformTitle(platform))
-        .fontSize(10)
+        .fontSize(9)
         .fontWeight(FontWeight.Medium)
         .fontColor(Color.White)
         .maxLines(1)
 
       if (this.getErrorText(platform).length > 0) {
         Text(this.getErrorText(platform))
-          .fontSize(8)
+          .fontSize(7)
           .fontColor('#FFD3D3')
           .maxLines(2)
       } else {
         Text(this.getStateText(platform))
-          .fontSize(8)
+          .fontSize(7)
           .fontColor('#DDE3EA')
           .maxLines(1)
       }
     }
-    .padding({ top: 4, right: 6, bottom: 4, left: 6 })
-    .margin({ top: this.shouldShowFoldedSwitch() ? 48 : 6, left: 6 })
+    .padding({ top: 3, right: 6, bottom: 3, left: 6 })
+    .margin({ top: 6, left: 6 })
     .borderRadius(4)
     .backgroundColor(OVERLAY_BACKGROUND)
   }
@@ -1255,17 +1292,17 @@ struct Index1 {
   foldedSwitchButton() {
     Row() {
       Text('切换直播')
-        .fontSize(11)
+        .fontSize(10)
         .fontWeight(FontWeight.Medium)
         .fontColor(Color.White)
         .maxLines(1)
     }
-    .width(78)
-    .height(34)
+    .width(66)
+    .height(28)
     .justifyContent(FlexAlign.Center)
-    .borderRadius(17)
-    .backgroundColor(CONTROL_BACKGROUND)
-    .margin({ top: 12, left: 12 })
+    .borderRadius(14)
+    .backgroundColor(FOLDED_SWITCH_GREEN)
+    .margin({ top: 6, right: 6 })
     .onClick(() => {
       this.toggleFoldedVisiblePlatform()
     })
@@ -1325,6 +1362,56 @@ struct Index1 {
   }
 
   /**
+   * 外屏双路直播时保留两路 surface，只通过层级和透明度切换可见平台。
+   * 这样切换直播不会销毁另一播放器的渲染面，体感上更接近无缝切换。
+   */
+  @Builder
+  foldedSurfaceLayer(platform: LivePlatform) {
+    Stack() {
+      this.surfaceForPlatform(platform)
+    }
+    .width('100%')
+    .height('100%')
+    .opacity(this.isFoldedVisiblePlatform(platform) ? 1 : 0)
+    .zIndex(this.isFoldedVisiblePlatform(platform) ? 2 : 1)
+  }
+
+  /**
+   * 外屏双直播专用面板。左上角只显示当前直播状态，右上角显示绿色切换按钮；
+   * 停止按钮始终作用于当前可见直播。
+   */
+  @Builder
+  foldedDualStreamPanel() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      this.foldedSurfaceLayer(LivePlatform.TAOBAO)
+      this.foldedSurfaceLayer(LivePlatform.DOUYIN)
+
+      this.streamStatusOverlay(this.getFoldedDisplayPlatform())
+
+      Row() {
+        Blank()
+        this.foldedSwitchButton()
+      }
+      .width('100%')
+
+      Column() {
+        Blank()
+        Row() {
+          Blank()
+          this.stopPlatformButton(this.getFoldedDisplayPlatform())
+        }
+        .width('100%')
+        .margin({ right: 8, bottom: 10 })
+      }
+      .width('100%')
+      .height('100%')
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(Color.Black)
+  }
+
+  /**
    * 未开流、已单路停止或实例池耗尽时的固定槽位占位。
    */
   @Builder
@@ -1360,7 +1447,7 @@ struct Index1 {
 
   /**
    * 固定平台槽位。展开屏左槽始终淘宝，右槽始终抖音；
-   * 外屏只渲染当前可见平台，停止当前平台后会自动落到另一活跃平台。
+   * 外屏单路渲染当前槽位；双路直播时由 foldedDualStreamPanel 保留两个 surface。
    */
   @Builder
   platformLiveSlot(platform: LivePlatform) {
@@ -1395,8 +1482,10 @@ struct Index1 {
       .width('100%')
       .height('100%')
       .backgroundColor(Color.Black)
+    } else if (this.isBothPlatformsLiveActive()) {
+      this.foldedDualStreamPanel()
     } else {
-      this.platformLiveSlot(this.getFoldedDisplayPlatform())
+      this.platformLiveSlot(this.getFoldedSlotPlatform())
     }
   }
 
