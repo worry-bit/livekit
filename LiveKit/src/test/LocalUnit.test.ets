@@ -1,7 +1,12 @@
 import { describe, beforeAll, beforeEach, afterEach, afterAll, it, expect } from '@ohos/hypium';
 import { parseKooInstanceAuthResponse } from '../main/ets/koophone/KooAuthParser';
 import { KooInstancePoolEntry, selectNextAvailableKooInstance } from '../main/ets/koophone/KooInstancePool';
-import { canStartKooLiveAddSelection, shouldShowKooLiveAddPanel } from '../main/ets/koophone/KooLiveSlotPolicy';
+import {
+  canStartKooLiveAddSelection,
+  getKooLiveAddOptionTitle,
+  isKooLiveAddOptionDisabled,
+  shouldShowKooLiveAddPanel
+} from '../main/ets/koophone/KooLiveSlotPolicy';
 
 export default function localUnitTest() {
   describe('localUnitTest', () => {
@@ -174,6 +179,20 @@ export default function localUnitTest() {
 
       expect(disabled).assertEqual(false);
       expect(enabled).assertEqual(true);
+    });
+
+    it('enablesStoppedPlatformEvenIfItWasSelectedBefore', 0, () => {
+      const disabled = isKooLiveAddOptionDisabled(false);
+
+      expect(disabled).assertEqual(false);
+    });
+
+    it('labelsOnlyActivePlatformAsPlaying', 0, () => {
+      const inactiveTitle = getKooLiveAddOptionTitle('淘宝直播', false);
+      const activeTitle = getKooLiveAddOptionTitle('抖音直播', true);
+
+      expect(inactiveTitle).assertEqual('淘宝直播');
+      expect(activeTitle).assertEqual('抖音直播（正在直播中）');
     });
   });
 }

@@ -66,6 +66,8 @@ export type {
 } from './src/main/ets/koophone/KooInstancePool'
 export {
   canStartKooLiveAddSelection,
+  getKooLiveAddOptionTitle,
+  isKooLiveAddOptionDisabled,
   shouldShowKooLiveAddPanel
 } from './src/main/ets/koophone/KooLiveSlotPolicy'
 export type { KooLiveAddSlotState } from './src/main/ets/koophone/KooLiveSlotPolicy'

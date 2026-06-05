@@ -11,6 +11,8 @@ import {
   KooInstancePoolEntry,
   LivePlatformConfig,
   canStartKooLiveAddSelection,
+  getKooLiveAddOptionTitle,
+  isKooLiveAddOptionDisabled,
   selectNextAvailableKooInstance,
   shouldShowKooLiveAddPanel,
   TouchAction,
@@ -484,8 +486,8 @@ struct Index1 {
   }
 
   /**
-   * 内屏补开面板里的临时选择。已选择或已直播的平台置灰锁定，
-   * 只有另一未直播平台可以被选中并启动。
+   * 内屏补开面板里的临时选择。只有正在直播的平台置灰锁定；
+   * 曾经选择过但已经停止的平台必须恢复可选，允许重新开流。
    */
   private togglePendingAddPlatform(platform: LivePlatform): void {
     if (this.isLiveAddOptionDisabled(platform)) {
@@ -498,7 +500,11 @@ struct Index1 {
   }
 
   private isLiveAddOptionDisabled(platform: LivePlatform): boolean {
-    return this.isPlatformSelected(platform) || this.isPlatformLiveActive(platform)
+    return isKooLiveAddOptionDisabled(this.isPlatformLiveActive(platform))
+  }
+
+  private getLiveAddOptionTitle(platform: LivePlatform): string {
+    return getKooLiveAddOptionTitle(this.getPlatformTitle(platform), this.isPlatformLiveActive(platform))
   }
 
   private hasAnyPlatformLiveActive(): boolean {
@@ -994,15 +1000,15 @@ struct Index1 {
   }
 
   /**
-   * 内屏空半屏的补开选项。和初始选择页保持同样的两行结构，
-   * 但已选择过的直播平台置灰且不可点击。
+   * 内屏空半屏的补开选项。正在直播的平台置灰并追加“正在直播中”，
+   * 已停止的平台即使之前选择过，也恢复可选。
    */
   @Builder
   liveAddPlatformOption(platform: LivePlatform) {
     Row({ space: 16 }) {
       this.liveAddIndicator(platform, this.isLiveAddOptionDisabled(platform))
 
-      Text(this.getPlatformTitle(platform))
+      Text(this.getLiveAddOptionTitle(platform))
         .fontSize(18)
         .fontWeight(FontWeight.Medium)
         .fontColor(this.isLiveAddOptionDisabled(platform) ? '#A8AFBA' : TEXT_PRIMARY)
@@ -1218,26 +1224,26 @@ struct Index1 {
   streamStatusOverlay(platform: LivePlatform) {
     Column({ space: 2 }) {
       Text(this.getPlatformTitle(platform))
-        .fontSize(12)
+        .fontSize(10)
         .fontWeight(FontWeight.Medium)
         .fontColor(Color.White)
         .maxLines(1)
 
       if (this.getErrorText(platform).length > 0) {
         Text(this.getErrorText(platform))
-          .fontSize(9)
+          .fontSize(8)
           .fontColor('#FFD3D3')
           .maxLines(2)
       } else {
         Text(this.getStateText(platform))
-          .fontSize(9)
+          .fontSize(8)
           .fontColor('#DDE3EA')
           .maxLines(1)
       }
     }
-    .padding({ top: 5, right: 8, bottom: 5, left: 8 })
-    .margin({ top: this.shouldShowFoldedSwitch() ? 54 : 12, left: 12 })
-    .borderRadius(5)
+    .padding({ top: 4, right: 6, bottom: 4, left: 6 })
+    .margin({ top: this.shouldShowFoldedSwitch() ? 48 : 6, left: 6 })
+    .borderRadius(4)
     .backgroundColor(OVERLAY_BACKGROUND)
   }
 
@@ -1272,16 +1278,16 @@ struct Index1 {
   stopPlatformButton(platform: LivePlatform) {
     Row() {
       Text('停止直播')
-        .fontSize(11)
+        .fontSize(10)
         .fontWeight(FontWeight.Medium)
         .fontColor(Color.White)
         .maxLines(1)
     }
-    .width(78)
-    .height(34)
+    .width(66)
+    .height(28)
     .justifyContent(FlexAlign.Center)
-    .borderRadius(17)
-    .backgroundColor(CONTROL_BACKGROUND)
+    .borderRadius(14)
+    .backgroundColor(LIVE_RED)
     .onClick(() => {
       this.stopPlatformStream(platform)
     })
@@ -1308,7 +1314,7 @@ struct Index1 {
           this.stopPlatformButton(platform)
         }
         .width('100%')
-        .margin({ right: 12, bottom: 14 })
+        .margin({ right: 8, bottom: 10 })
       }
       .width('100%')
       .height('100%')

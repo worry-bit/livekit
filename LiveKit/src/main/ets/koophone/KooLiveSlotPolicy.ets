@@ -24,3 +24,18 @@ export function shouldShowKooLiveAddPanel(state: KooLiveAddSlotState): boolean {
 export function canStartKooLiveAddSelection(state: KooLiveAddSlotState): boolean {
   return shouldShowKooLiveAddPanel(state) && state.isPendingAdd
 }
+
+/**
+ * 补开面板的选项禁用规则：只锁定仍在直播的实例。
+ * 曾经选择过但已经停止的直播应恢复可选，允许用户重新补开。
+ */
+export function isKooLiveAddOptionDisabled(isOptionLiveActive: boolean): boolean {
+  return isOptionLiveActive
+}
+
+/**
+ * 补开面板里正在直播的平台要明确标注，避免用户以为两路都不可选。
+ */
+export function getKooLiveAddOptionTitle(title: string, isOptionLiveActive: boolean): string {
+  return isOptionLiveActive ? `${title}（正在直播中）` : title
+}
