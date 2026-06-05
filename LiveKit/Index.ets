@@ -55,6 +55,7 @@ export type {
   LivePlatformConfig
 } from './src/main/ets/koophone/KooPhoneTypes'
 export { KooAuthService, createKooAuthService } from './src/main/ets/koophone/KooAuthService'
+export { parseKooInstanceAuthResponse } from './src/main/ets/koophone/KooAuthParser'
 export {
   KooInputController,
   TouchAction

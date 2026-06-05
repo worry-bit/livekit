@@ -7,6 +7,7 @@ export interface KooPhoneParams {
   token: string               // 鉴权 token
   uuid?: string               // 用户唯一标识（H5 required，不传则自动生成）
   sessionId?: string          // 会话 ID（不传则使用 token）
+  streamingId?: string        // 串流 ID（KooPhone 实例鉴权返回时优先使用）
   iceServers?: KooIceServer[] // ICE 服务器（可选）
   mode?: string               // 默认 'app'
   role?: string               // 默认 'master'
@@ -23,17 +24,17 @@ export interface IamPasswordConfig {
   projectName?: string
 }
 
-// KooPhone auth 预留接口配置。官网接口已下线，当前只固定 body.token 解析规则。
+// KooPhone 实例鉴权接口配置。authUrl 为 /openapi/koophone/v1/instances/{kp_id}/auth 完整路径。
 export interface KooAuthConfig {
   authUrl: string
   tenantId?: string
   projectId?: string
 }
 
-// 直播平台固定配置：signalingUrl/boxId 写死，SDK token 每次开流前动态获取。
+// 直播平台配置：IAM/KooPhone auth 每个平台独立；signalingUrl/boxId 由实例鉴权返回。
 export interface LivePlatformConfig {
-  signalingUrl: string
-  boxId: string
+  signalingUrl?: string
+  boxId?: string
   iam: IamPasswordConfig
   kooAuth: KooAuthConfig
   iceServers?: KooIceServer[]
@@ -43,9 +44,13 @@ export interface LivePlatformConfig {
   volume?: number
 }
 
-// KooPhone auth 返回给 SDK 的短效 token。当前业务约束为约 15 秒有效期。
+// KooPhone 实例鉴权返回给 SDK 的开流参数。当前 device_token 约 15 秒有效。
 export interface KooAuthTokenResult {
   token: string
+  signalingUrl: string
+  boxId: string
+  streamingId?: string
+  iceServers?: KooIceServer[]
   expiresAt?: string
 }
 

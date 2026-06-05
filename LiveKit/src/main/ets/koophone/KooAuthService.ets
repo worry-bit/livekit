@@ -5,6 +5,7 @@ import {
   KooAuthTokenResult,
   LivePlatformConfig
 } from './KooPhoneTypes'
+import { parseKooInstanceAuthResponse } from './KooAuthParser'
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 5000
 const DEFAULT_READ_TIMEOUT_MS = 10000
@@ -46,31 +47,19 @@ interface IamTokenRequest {
   auth: IamAuth
 }
 
-interface KooAuthRequest {
-  iamToken: string
-  boxId: string
-  tenantId?: string
-  projectId?: string
-}
-
-interface KooAuthResponse {
-  token?: string
-  expiresAt?: string
-}
-
 /**
  * 负责串流前的两段式鉴权：
  * 1. 调 IAM /v3/auth/tokens 获取租户 IAM token；
- * 2. 用 IAM token 调预留 KooPhone auth 接口，换取约 15 秒有效的 SDK token。
+ * 2. 用 IAM token 调 KooPhone 实例鉴权接口，换取约 15 秒有效的 SDK 开流参数。
  */
 export class KooAuthService {
   /**
-   * 获取 KooPhone SDK 短效 token。signalingUrl/boxId 保持平台固定配置，
-   * 返回 token 只在当前 open 尝试中使用，重试时会重新获取。
+   * 获取 KooPhone SDK 短效开流参数。signalingUrl/token/boxId 都来自实例鉴权响应，
+   * 返回结果只在当前 open 尝试中使用，重试时会重新获取。
    */
   async requestSdkToken(config: LivePlatformConfig): Promise<KooAuthTokenResult> {
     const iamToken = await this.requestIamToken(config.iam)
-    return this.requestKooPhoneAuth(config.kooAuth, config.boxId, iamToken)
+    return this.requestKooPhoneAuth(config.kooAuth, iamToken)
   }
 
   /**
@@ -107,27 +96,21 @@ export class KooAuthService {
   }
 
   /**
-   * 调用 KooPhone auth 预留接口。当前官网接口已下线，先固定约定：
-   * 响应 body 为 JSON，SDK token 位于 body.token。
+   * 调用 KooPhone 实例鉴权接口。
+   * 入参只需要 x-auth-token 头；响应中的 signaling_url/device_token/device_id
+   * 分别映射为 SDK 的 signalingUrl/token/boxId。
    */
-  private async requestKooPhoneAuth(config: KooAuthConfig, boxId: string, iamToken: string): Promise<KooAuthTokenResult> {
+  private async requestKooPhoneAuth(config: KooAuthConfig, iamToken: string): Promise<KooAuthTokenResult> {
     this.assertKooAuthConfig(config)
 
     const req = http.createHttp()
     try {
-      const body: KooAuthRequest = {
-        iamToken,
-        boxId,
-        tenantId: config.tenantId,
-        projectId: config.projectId
-      }
       const res = await this.safeRequest(req, config.authUrl, {
         method: http.RequestMethod.POST,
         header: {
           'Content-Type': 'application/json;charset=utf8',
-          'X-Auth-Token': iamToken
+          'x-auth-token': iamToken
         },
-        extraData: JSON.stringify(body),
         connectTimeout: DEFAULT_CONNECT_TIMEOUT_MS,
         readTimeout: DEFAULT_READ_TIMEOUT_MS
       }, 'KooPhone auth network request failed')
@@ -138,16 +121,7 @@ export class KooAuthService {
       }
 
       const raw = `${res.result}`
-      const auth = JSON.parse(raw) as KooAuthResponse
-      const token = auth.token ?? ''
-      if (token.length === 0) {
-        throw new Error('KooPhone auth response missing body.token')
-      }
-
-      return {
-        token,
-        expiresAt: auth.expiresAt
-      }
+      return parseKooInstanceAuthResponse(raw)
     } finally {
       req.destroy()
     }

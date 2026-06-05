@@ -1,4 +1,4 @@
-import 'webrtc-adapter';
+import './lib/WebRTCAdapter';
 import EventEmitter from './lib/EventEmitter';
 import SdpUtils from './util/SdpUtils';
 import Utils from "./util/Utils";

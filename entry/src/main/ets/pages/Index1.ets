@@ -7,6 +7,7 @@ import {
   KooPhoneParams,
   KooPhonePlayer,
   KooPhoneState,
+  KooAuthTokenResult,
   LivePlatformConfig,
   TouchAction,
   TouchPoint
@@ -18,8 +19,6 @@ enum LivePlatform {
 }
 
 const TAOBAO_CONFIG: LivePlatformConfig = {
-  signalingUrl: 'wss://your-taobao-signal-server',
-  boxId: 'your-taobao-box-id',
   iam: {
     authUrl: 'https://iam.myhuaweicloud.com/v3/auth/tokens',
     domainName: '',
@@ -28,15 +27,13 @@ const TAOBAO_CONFIG: LivePlatformConfig = {
     projectName: ''
   },
   kooAuth: {
-    authUrl: '',
+    authUrl: 'http://your-koophone-host:8669/openapi/koophone/v1/instances/your-taobao-kp-id/auth',
     tenantId: '',
     projectId: ''
   }
 }
 
 const DOUYIN_CONFIG: LivePlatformConfig = {
-  signalingUrl: 'wss://your-douyin-signal-server',
-  boxId: 'your-douyin-box-id',
   iam: {
     authUrl: 'https://iam.myhuaweicloud.com/v3/auth/tokens',
     domainName: '',
@@ -45,7 +42,7 @@ const DOUYIN_CONFIG: LivePlatformConfig = {
     projectName: ''
   },
   kooAuth: {
-    authUrl: '',
+    authUrl: 'http://your-koophone-host:8669/openapi/koophone/v1/instances/your-douyin-kp-id/auth',
     tenantId: '',
     projectId: ''
   }
@@ -227,7 +224,7 @@ struct Index1 {
         return
       }
 
-      const params = this.buildKooPhoneParams(config, tokenResult.token)
+      const params = this.buildKooPhoneParams(config, tokenResult)
       this.setPlatformStarted(platform, true)
       this.setPlatformStarting(platform, false)
       this.setPlatformStateText(platform, 'connecting')
@@ -336,12 +333,13 @@ struct Index1 {
     return platform === LivePlatform.TAOBAO ? this.taobaoPlayer : this.douyinPlayer
   }
 
-  private buildKooPhoneParams(config: LivePlatformConfig, token: string): KooPhoneParams {
+  private buildKooPhoneParams(config: LivePlatformConfig, auth: KooAuthTokenResult): KooPhoneParams {
     return {
-      signalingUrl: config.signalingUrl,
-      boxId: config.boxId,
-      token,
-      iceServers: config.iceServers,
+      signalingUrl: auth.signalingUrl,
+      boxId: auth.boxId,
+      token: auth.token,
+      streamingId: auth.streamingId,
+      iceServers: auth.iceServers ?? config.iceServers,
       mode: config.mode,
       role: config.role,
       sole: config.sole,

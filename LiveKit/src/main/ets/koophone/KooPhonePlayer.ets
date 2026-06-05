@@ -97,8 +97,9 @@ export class KooPhonePlayer {
 
     this.params = params
     this.currentSurfaceId = surfaceId
-    // 生成会话标识（对应 H5 _open() 中的 streamingid/sessionid/uuid）
-    this.streamingId = this.randomUuid()
+    // 生成会话标识（对应 H5 _open() 中的 streamingid/sessionid/uuid）。
+    // KooPhone 实例鉴权返回 streamingId 时优先使用服务端返回值。
+    this.streamingId = params.streamingId ?? this.randomUuid()
     this.sessionId = params.sessionId ?? params.token
     this.uuid = params.uuid ?? this.randomUuid()
 

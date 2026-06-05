@@ -95,8 +95,8 @@ sequenceDiagram
   UI->>Auth: requestSdkToken(platformConfig)
   Auth->>IAM: POST /v3/auth/tokens
   IAM-->>Auth: Header X-Subject-Token
-  Auth->>KAuth: POST authUrl with X-Auth-Token
-  KAuth-->>Auth: body.token
+  Auth->>KAuth: POST /openapi/koophone/v1/instances/{kp_id}/auth with x-auth-token
+  KAuth-->>Auth: data.resource.rtc.ice_signaling.signaling_url + data.device_token + data.resource.device_id
   Auth-->>UI: KooAuthTokenResult
   UI->>Player: open({ signalingUrl, boxId, token }, surfaceId)
   Player->>Signal: connect(socket.io url)
@@ -117,9 +117,19 @@ sequenceDiagram
 IAM token 与 KooPhone SDK token 是两种不同 token：
 
 - IAM token：来自 IAM `X-Subject-Token` 响应头，用于调用云服务接口。
-- KooPhone SDK token：来自预留 KooPhone auth 响应 `body.token`，传给 `KooPhonePlayer.open()`，按当前业务约束只有约 15 秒有效期。
+- KooPhone SDK token：来自 KooPhone 实例鉴权响应 `data.device_token`，传给 `KooPhonePlayer.open()`，按当前业务约束只有约 15 秒有效期。
 
 因此每次启动或自动重试都会重新调用 `KooAuthService.requestSdkToken()`，不会复用旧 SDK token。
+
+KooPhone 实例鉴权响应字段映射：
+
+| 响应字段 | SDK 参数 | 说明 |
+|---|---|---|
+| `data.resource.rtc.ice_signaling.signaling_url` | `KooPhoneParams.signalingUrl` | 信令服务地址 |
+| `data.device_token` | `KooPhoneParams.token` | 短效 SDK token |
+| `data.resource.device_id` | `KooPhoneParams.boxId` | 云手机设备 ID |
+| `data.streamingId` | `KooPhoneParams.streamingId` | 有返回时透传给信令连接 |
+| `data.resource.rtc.ice_signaling.ice_servers` | `KooPhoneParams.iceServers` | 有 ICE server 时透传给 WebRTC |
 
 ## 5. 折叠屏布局逻辑
 
@@ -221,8 +231,6 @@ hdc -t 127.0.0.1:5555 file recv /data/local/tmp/livekit.jpeg ./livekit.jpeg
 
 当前真实敏感信息不入库。要联调真实串流，需要在 `Index1.ets` 顶部替换：
 
-- `TAOBAO_CONFIG.signalingUrl`
-- `TAOBAO_CONFIG.boxId`
 - `TAOBAO_CONFIG.iam.domainName`
 - `TAOBAO_CONFIG.iam.userName`
 - `TAOBAO_CONFIG.iam.password`
@@ -230,7 +238,13 @@ hdc -t 127.0.0.1:5555 file recv /data/local/tmp/livekit.jpeg ./livekit.jpeg
 - `TAOBAO_CONFIG.kooAuth.authUrl`
 - 抖音同理替换 `DOUYIN_CONFIG`
 
-`signalingUrl / boxId` 是平台固定参数；`token` 不再写死，而是每次开流前动态获取。
+`TAOBAO_CONFIG.kooAuth.authUrl` 和 `DOUYIN_CONFIG.kooAuth.authUrl` 应填写完整实例鉴权路径：
+
+```text
+http://<koophone-host>:8669/openapi/koophone/v1/instances/<kp_id>/auth
+```
+
+`signalingUrl / boxId / token` 不再写死，而是每次开流前从 KooPhone 实例鉴权响应动态获取。
 
 ## 9. 已遇到的问题复盘
 
@@ -242,3 +256,5 @@ hdc -t 127.0.0.1:5555 file recv /data/local/tmp/livekit.jpeg ./livekit.jpeg
 - ArkUI `Button` 默认样式会覆盖禁用态颜色，所以选择页按钮和停止按钮均用 `Row + Text` 自绘。
 - `build-profile.json5` 仍包含同事机器的签名路径；本机自签名材料不应提交到 git。
 - DevEco Emulator CLI 未提供折叠/展开控制，需要用图形工具栏或真机完成外屏截图。
+- KooPhone auth 真实响应为多层嵌套结构，解析逻辑拆到 `KooAuthParser.ets` 并补了本地单测，避免网络环境影响字段映射验证。
+- `hvigorw test` 会打包旧 H5 JS 参考文件，因此新增了最小本地 shim 解决 `socket.io-client / webrtc-adapter / Constants` 等解析问题；当前运行主链路仍是 ArkTS 版本。

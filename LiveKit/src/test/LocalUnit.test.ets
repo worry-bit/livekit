@@ -1,4 +1,5 @@
 import { describe, beforeAll, beforeEach, afterEach, afterAll, it, expect } from '@ohos/hypium';
+import { parseKooInstanceAuthResponse } from '../main/ets/koophone/KooAuthParser';
 
 export default function localUnitTest() {
   describe('localUnitTest', () => {
@@ -28,6 +29,32 @@ export default function localUnitTest() {
       // Defines a variety of assertion methods, which are used to declare expected boolean conditions.
       expect(a).assertContain(b);
       expect(a).assertEqual(a);
+    });
+  });
+
+  describe('KooPhone instance auth parser', () => {
+    it('parsesSdkStreamingParams', 0, () => {
+      const raw = '{"data":{"resource":{"rtc":{"ice_signaling":{"signaling_url":"http://koophone.example.internal:18082","expired_time":null,"ice_servers":[]}},"device_id":"sample-device-id","kp_id":"sample-kp-id"},"device_token":"sample-device-token","streamingId":"sample-streaming-id"},"error_code":"0","error_msg":"OK"}';
+
+      const result = parseKooInstanceAuthResponse(raw);
+
+      expect(result.signalingUrl).assertEqual('http://koophone.example.internal:18082');
+      expect(result.token).assertEqual('sample-device-token');
+      expect(result.boxId).assertEqual('sample-device-id');
+      expect(result.streamingId).assertEqual('sample-streaming-id');
+      expect(result.iceServers?.length ?? 0).assertEqual(0);
+    });
+
+    it('throwsWhenDeviceTokenMissing', 0, () => {
+      const raw = '{"data":{"resource":{"rtc":{"ice_signaling":{"signaling_url":"http://koophone.example.internal:18082","ice_servers":[]}},"device_id":"sample-device-id"}},"error_code":"0","error_msg":"OK"}';
+
+      let containsExpectedError = false;
+      try {
+        parseKooInstanceAuthResponse(raw);
+      } catch (e) {
+        containsExpectedError = String(e).indexOf('data.device_token') >= 0;
+      }
+      expect(containsExpectedError).assertEqual(true);
     });
   });
 }
