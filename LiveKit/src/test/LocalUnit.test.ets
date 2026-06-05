@@ -1,5 +1,6 @@
 import { describe, beforeAll, beforeEach, afterEach, afterAll, it, expect } from '@ohos/hypium';
 import { parseKooInstanceAuthResponse } from '../main/ets/koophone/KooAuthParser';
+import { KooInstancePoolEntry, selectNextAvailableKooInstance } from '../main/ets/koophone/KooInstancePool';
 
 export default function localUnitTest() {
   describe('localUnitTest', () => {
@@ -65,6 +66,55 @@ export default function localUnitTest() {
         containsExpectedError = String(e).indexOf('data.device_token') >= 0;
       }
       expect(containsExpectedError).assertEqual(true);
+    });
+  });
+
+  describe('KooPhone instance pool strategy', () => {
+    it('selectsFirstBackupThatIsNotCurrentTriedOrOccupied', 0, () => {
+      const pool: KooInstancePoolEntry[] = [
+        { id: 'dhb4q9j4' },
+        { id: 'sKuBZq7c' },
+        { id: 'backup-001' }
+      ];
+
+      const result = selectNextAvailableKooInstance(pool, {
+        currentInstanceId: 'dhb4q9j4',
+        triedInstanceIds: ['dhb4q9j4'],
+        occupiedInstanceIds: ['sKuBZq7c']
+      });
+
+      expect(result).assertEqual('backup-001');
+    });
+
+    it('doesNotSelectInstanceOccupiedByOtherLiveRoom', 0, () => {
+      const pool: KooInstancePoolEntry[] = [
+        { id: 'dhb4q9j4' },
+        { id: 'sKuBZq7c' }
+      ];
+
+      const result = selectNextAvailableKooInstance(pool, {
+        currentInstanceId: 'dhb4q9j4',
+        triedInstanceIds: ['dhb4q9j4'],
+        occupiedInstanceIds: ['sKuBZq7c']
+      });
+
+      expect(result).assertEqual('');
+    });
+
+    it('skipsInstancesAlreadyTriedBySamePlatform', 0, () => {
+      const pool: KooInstancePoolEntry[] = [
+        { id: 'dhb4q9j4' },
+        { id: 'sKuBZq7c' },
+        { id: 'backup-001' }
+      ];
+
+      const result = selectNextAvailableKooInstance(pool, {
+        currentInstanceId: 'dhb4q9j4',
+        triedInstanceIds: ['dhb4q9j4', 'sKuBZq7c'],
+        occupiedInstanceIds: []
+      });
+
+      expect(result).assertEqual('backup-001');
     });
   });
 }

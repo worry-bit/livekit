@@ -57,6 +57,14 @@ export type {
 export { KooAuthService, createKooAuthService } from './src/main/ets/koophone/KooAuthService'
 export { parseKooInstanceAuthResponse } from './src/main/ets/koophone/KooAuthParser'
 export {
+  includesKooInstanceId,
+  selectNextAvailableKooInstance
+} from './src/main/ets/koophone/KooInstancePool'
+export type {
+  KooInstancePoolEntry,
+  KooInstanceSelectionInput
+} from './src/main/ets/koophone/KooInstancePool'
+export {
   KooInputController,
   TouchAction
 } from './src/main/ets/koophone/KooInputController'

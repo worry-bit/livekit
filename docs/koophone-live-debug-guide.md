@@ -21,6 +21,7 @@ EntryAbility.onCreate()
 flowchart TD
   Ability["EntryAbility\nUIAbility 生命周期"]
   Page["Index1.ets\n折叠屏选择页/直播页"]
+  Pool["KooInstancePool\n共享实例池选择策略"]
   Auth["KooAuthService\nIAM token + KooPhone auth"]
   PlayerA["KooPhonePlayer\n淘宝实例"]
   PlayerB["KooPhonePlayer\n抖音实例"]
@@ -30,6 +31,7 @@ flowchart TD
   Cloud["华为云 KooPhone / boxrtc"]
 
   Ability -->|"loadContent('pages/Index1')"| Page
+  Page -->|"selectNextAvailableKooInstance()"| Pool
   Page -->|"startPlatformIfReady()"| Auth
   Page -->|"open(params, surfaceId)"| PlayerA
   Page -->|"open(params, surfaceId)"| PlayerB
@@ -65,6 +67,8 @@ platformOption(platform, title)
 开始直播按钮 onClick()
   -> startSelectedStreams()
   -> shouldStartTaobao / shouldStartDouyin 记录要启动的平台
+  -> prepareInitialInstanceAssignments()
+  -> 淘宝优先 dhb4q9j4，抖音优先 sKuBZq7c
   -> isLiveStarted = true 进入直播页
   -> livePage()
   -> liveContent()
@@ -143,11 +147,12 @@ KooPhone 实例鉴权响应字段映射：
 
 开始直播后：
 
-- 展开屏：`liveContent()` 使用左右分栏。
-- 外屏/窄屏：只展示 `getPrimaryPlatform()` 返回的主直播。
-- 主直播规则：优先淘宝；如果只选抖音，抖音显示在左侧或外屏。
-- 双选但当前是外屏时，只显示主直播；展开后第二路 `XComponent` 加载，随后触发第二路 `startPlatformIfReady()`。
-- 直播态“停止串流”按钮覆盖在右下角，避免遮挡每路顶部状态浮层。
+- 展开屏：`liveContent()` 使用固定左右槽位，左侧固定淘宝，右侧固定抖音。
+- 单路停止、失败或未启动时，对应槽位显示“暂无直播内容”或失败信息，另一槽位不受影响。
+- 外屏/窄屏：只展示 `foldedVisiblePlatform` 对应的一路；如果当前可见平台停止或失败，`getFoldedDisplayPlatform()` 自动回落到另一活跃平台。
+- 外屏双路都处于直播态时，左上角显示“切换直播”按钮。点击只改外屏可见平台，不改变展开屏左淘宝、右抖音布局。
+- 每个 `streamPanel(platform)` 内部都有独立“停止直播”按钮，点击后只关闭当前平台播放器和该路重试定时器。
+- 直播状态浮层由 `streamStatusOverlay(platform)` 渲染，平台名约 `12sp`，状态/错误约 `9sp`，背景 30% 不透明度，减少遮挡。
 
 ## 6. 重试逻辑
 
@@ -157,6 +162,8 @@ KooPhone 实例鉴权响应字段映射：
 - `taobaoStarting / douyinStarting`
 - `taobaoStarted / douyinStarted`
 - `taobaoErrorText / douyinErrorText`
+- `taobaoInstanceId / douyinInstanceId`
+- `taobaoTriedInstanceIds / douyinTriedInstanceIds`
 
 失败入口：
 
@@ -173,10 +180,21 @@ WebSocket / WebRTC 失败
 
 重试策略：
 
-- 最多自动重试 3 次。
-- 延迟分别是 800ms、1600ms、2400ms。
-- 每次重试都会重新获取 SDK token。
-- 双选时两路互不影响。
+- 每个实例最多自动重试 3 次。
+- 同一实例的三次延迟分别是 800ms、1600ms、2400ms。
+- 每次重试都会重新获取 IAM token 和 KooPhone SDK token。
+- 当前实例 3 次失败后调用 `switchToNextAvailableInstance(platform)`。
+- 备用实例由 `LiveKit/src/main/ets/koophone/KooInstancePool.ets` 的 `selectNextAvailableKooInstance()` 选择。
+- 候选实例必须不是当前实例、本平台本轮没尝试过、没有被另一直播正在使用。
+- 共享池耗尽后，该路显示失败；另一直播继续播放或继续自己的重试流程。
+
+当前手写共享池在 `Index1.ets` 顶部：
+
+```text
+KOOPHONE_INSTANCE_POOL = [dhb4q9j4, sKuBZq7c]
+```
+
+如果租户下后续增加备用实例，只需要往这个列表追加 `{ id: '<kp_id>' }`，不要把两路直播同时配置为同一个正在使用的实例。
 
 ## 7. 如何端到端调试
 
@@ -244,6 +262,7 @@ hdc -t 127.0.0.1:5555 file recv /data/local/tmp/livekit.jpeg ./livekit.jpeg
 
 - 淘宝直播：`dhb4q9j4`
 - 抖音直播：`sKuBZq7c`
+- 共享实例池：`KOOPHONE_INSTANCE_POOL`，默认包含上面两个实例，后续手动追加备用实例。
 
 当前测试环境 URL 位于 `entry/src/main/ets/pages/Index1.ets` 顶部常量：
 
@@ -278,6 +297,7 @@ http://<koophone-host>:8669/openapi/koophone/v1/instances/<kp_id>/auth
 - `build-profile.json5` 仍包含同事机器的签名路径；本机自签名材料不应提交到 git。
 - DevEco Emulator CLI 未提供折叠/展开控制，需要用图形工具栏或真机完成外屏截图。
 - KooPhone auth 真实响应为多层嵌套结构，解析逻辑拆到 `KooAuthParser.ets` 并补了本地单测，避免网络环境影响字段映射验证。
+- 实例池切换逻辑拆到 `KooInstancePool.ets`，避免把“跳过当前实例、跳过已尝试实例、跳过被占用实例”的规则散落在 ArkUI 页面里。
 - `hvigorw test` 会打包旧 H5 JS 参考文件，因此新增了最小本地 shim 解决 `socket.io-client / webrtc-adapter / Constants` 等解析问题；当前运行主链路仍是 ArkTS 版本。
 - 2026-06-05 首次真机 Mate X7 验证时，签名 HAP 已安装并进入双路直播态，`XComponent` surface 均加载成功；当时阻塞在 IAM 配置为空，页面和 hilog 均显示 `IAM config is incomplete`，尚未真正发起 IAM HTTP 请求。
 - 2026-06-05 补齐测试环境 IAM 参数后，真机 Mate X7 双路串流已成功，两路均进入 `playing`；提交前 IAM 账号密码已恢复为占位符。
