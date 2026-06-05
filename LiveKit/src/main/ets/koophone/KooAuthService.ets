@@ -72,6 +72,7 @@ export class KooAuthService {
     const req = http.createHttp()
     try {
       const body = this.buildIamTokenRequest(config)
+      console.info('[KooAuthService] Requesting IAM token')
       const res = await this.safeRequest(req, `${config.authUrl}?nocatalog=true`, {
         method: http.RequestMethod.POST,
         header: { 'Content-Type': 'application/json;charset=utf8' },
@@ -81,6 +82,7 @@ export class KooAuthService {
       }, 'IAM token network request failed')
 
       const statusCode = res.responseCode
+      console.info(`[KooAuthService] IAM token response status: ${statusCode}`)
       if (statusCode < 200 || statusCode >= 300) {
         throw new Error(`IAM token request failed: ${statusCode}`)
       }
@@ -105,6 +107,7 @@ export class KooAuthService {
 
     const req = http.createHttp()
     try {
+      console.info(`[KooAuthService] Requesting KooPhone auth: ${this.maskKooAuthUrl(config.authUrl)}`)
       const res = await this.safeRequest(req, config.authUrl, {
         method: http.RequestMethod.POST,
         header: {
@@ -116,6 +119,7 @@ export class KooAuthService {
       }, 'KooPhone auth network request failed')
 
       const statusCode = res.responseCode
+      console.info(`[KooAuthService] KooPhone auth response status: ${statusCode}`)
       if (statusCode < 200 || statusCode >= 300) {
         throw new Error(`KooPhone auth request failed: ${statusCode}`)
       }
@@ -201,6 +205,21 @@ export class KooAuthService {
     }
 
     return headerText.substring(startQuoteIndex + 1, endQuoteIndex)
+  }
+
+  private maskKooAuthUrl(url: string): string {
+    const marker = '/instances/'
+    const markerIndex = url.indexOf(marker)
+    if (markerIndex < 0) {
+      return url
+    }
+
+    const idStartIndex = markerIndex + marker.length
+    const idEndIndex = url.indexOf('/', idStartIndex)
+    if (idEndIndex < 0) {
+      return `${url.substring(0, idStartIndex)}***`
+    }
+    return `${url.substring(0, idStartIndex)}***${url.substring(idEndIndex)}`
   }
 }
 

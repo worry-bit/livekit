@@ -36,7 +36,7 @@ interface KooInstanceAuthData {
 
 interface KooInstanceAuthResponse {
   data?: KooInstanceAuthData
-  error_code?: string
+  error_code?: string | number
   error_msg?: string
 }
 
@@ -47,7 +47,7 @@ interface KooInstanceAuthResponse {
  */
 export function parseKooInstanceAuthResponse(raw: string): KooAuthTokenResult {
   const response = JSON.parse(raw) as KooInstanceAuthResponse
-  if (response.error_code !== '0') {
+  if (`${response.error_code ?? ''}` !== '0') {
     throw new Error(`KooPhone auth failed: ${response.error_code ?? ''} ${response.error_msg ?? ''}`.trim())
   }
 

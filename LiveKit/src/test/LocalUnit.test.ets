@@ -45,6 +45,16 @@ export default function localUnitTest() {
       expect(result.iceServers?.length ?? 0).assertEqual(0);
     });
 
+    it('parsesNumericSuccessCode', 0, () => {
+      const raw = '{"data":{"resource":{"rtc":{"ice_signaling":{"signaling_url":"http://koophone.example.internal:18082","expired_time":null,"ice_servers":[]}},"device_id":"sample-device-id","kp_id":"sample-kp-id"},"device_token":"sample-device-token","streamingId":"sample-streaming-id"},"error_code":0,"error_msg":"OK"}';
+
+      const result = parseKooInstanceAuthResponse(raw);
+
+      expect(result.signalingUrl).assertEqual('http://koophone.example.internal:18082');
+      expect(result.token).assertEqual('sample-device-token');
+      expect(result.boxId).assertEqual('sample-device-id');
+    });
+
     it('throwsWhenDeviceTokenMissing', 0, () => {
       const raw = '{"data":{"resource":{"rtc":{"ice_signaling":{"signaling_url":"http://koophone.example.internal:18082","ice_servers":[]}},"device_id":"sample-device-id"}},"error_code":"0","error_msg":"OK"}';
 

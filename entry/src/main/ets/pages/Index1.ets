@@ -18,6 +18,10 @@ enum LivePlatform {
   DOUYIN = 'douyin'
 }
 
+const KOOPHONE_AUTH_HOST = 'http://100.93.2.248:8669'
+const TAOBAO_INSTANCE_ID = 'dhb4q9j4'
+const DOUYIN_INSTANCE_ID = 'sKuBZq7c'
+
 const TAOBAO_CONFIG: LivePlatformConfig = {
   iam: {
     authUrl: 'https://iam.myhuaweicloud.com/v3/auth/tokens',
@@ -27,7 +31,7 @@ const TAOBAO_CONFIG: LivePlatformConfig = {
     projectName: ''
   },
   kooAuth: {
-    authUrl: 'http://your-koophone-host:8669/openapi/koophone/v1/instances/your-taobao-kp-id/auth',
+    authUrl: `${KOOPHONE_AUTH_HOST}/openapi/koophone/v1/instances/${TAOBAO_INSTANCE_ID}/auth`,
     tenantId: '',
     projectId: ''
   }
@@ -42,7 +46,7 @@ const DOUYIN_CONFIG: LivePlatformConfig = {
     projectName: ''
   },
   kooAuth: {
-    authUrl: 'http://your-koophone-host:8669/openapi/koophone/v1/instances/your-douyin-kp-id/auth',
+    authUrl: `${KOOPHONE_AUTH_HOST}/openapi/koophone/v1/instances/${DOUYIN_INSTANCE_ID}/auth`,
     tenantId: '',
     projectId: ''
   }
@@ -215,6 +219,7 @@ struct Index1 {
     this.setPlatformStarting(platform, true)
     this.setPlatformErrorText(platform, '')
     this.setPlatformStateText(platform, `authenticating(${this.getRetryCount(platform)}/${MAX_STREAM_RETRY})`)
+    console.info(`[Index1] ${this.getPlatformTitle(platform)} start attempt ${this.getRetryCount(platform)}/${MAX_STREAM_RETRY}`)
 
     try {
       const config = this.getPlatformConfig(platform)
@@ -228,9 +233,11 @@ struct Index1 {
       this.setPlatformStarted(platform, true)
       this.setPlatformStarting(platform, false)
       this.setPlatformStateText(platform, 'connecting')
+      console.info(`[Index1] ${this.getPlatformTitle(platform)} auth ok, opening KooPhonePlayer`)
       this.getPlatformPlayer(platform).open(params, this.getPlatformSurfaceId(platform))
     } catch (e) {
       this.setPlatformStarting(platform, false)
+      console.error(`[Index1] ${this.getPlatformTitle(platform)} start failed: ${String(e)}`)
       this.schedulePlatformRetry(platform, String(e))
     }
   }
@@ -445,6 +452,7 @@ struct Index1 {
     this.setPlatformRetryCount(platform, nextRetryCount)
     this.setPlatformErrorText(platform, `${reason}; 正在自动重试 ${nextRetryCount}/${MAX_STREAM_RETRY}`)
     this.setPlatformStateText(platform, 'retrying')
+    console.warn(`[Index1] ${this.getPlatformTitle(platform)} retry ${nextRetryCount}/${MAX_STREAM_RETRY}: ${reason}`)
 
     const timer = setTimeout(() => {
       this.setRetryTimer(platform, -1)

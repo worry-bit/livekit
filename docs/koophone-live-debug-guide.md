@@ -229,16 +229,23 @@ hdc -t 127.0.0.1:5555 file recv /data/local/tmp/livekit.jpeg ./livekit.jpeg
 
 ## 8. 真实参数替换位置
 
-当前真实敏感信息不入库。要联调真实串流，需要在 `Index1.ets` 顶部替换：
+当前真实敏感信息不入库。要联调真实串流，需要在 `Index1.ets` 顶部替换或补齐：
 
 - `TAOBAO_CONFIG.iam.domainName`
 - `TAOBAO_CONFIG.iam.userName`
 - `TAOBAO_CONFIG.iam.password`
 - `TAOBAO_CONFIG.iam.projectName`
-- `TAOBAO_CONFIG.kooAuth.authUrl`
-- 抖音同理替换 `DOUYIN_CONFIG`
+- `KOOPHONE_AUTH_HOST`
+- `TAOBAO_INSTANCE_ID`
+- `DOUYIN_INSTANCE_ID`
+- 抖音 IAM 字段同理替换 `DOUYIN_CONFIG`
 
-`TAOBAO_CONFIG.kooAuth.authUrl` 和 `DOUYIN_CONFIG.kooAuth.authUrl` 应填写完整实例鉴权路径：
+当前真机联调实例 ID 已接入代码：
+
+- 淘宝直播：`dhb4q9j4`
+- 抖音直播：`sKuBZq7c`
+
+`TAOBAO_CONFIG.kooAuth.authUrl` 和 `DOUYIN_CONFIG.kooAuth.authUrl` 由 `KOOPHONE_AUTH_HOST` 和实例 ID 拼出完整实例鉴权路径：
 
 ```text
 http://<koophone-host>:8669/openapi/koophone/v1/instances/<kp_id>/auth
@@ -258,3 +265,4 @@ http://<koophone-host>:8669/openapi/koophone/v1/instances/<kp_id>/auth
 - DevEco Emulator CLI 未提供折叠/展开控制，需要用图形工具栏或真机完成外屏截图。
 - KooPhone auth 真实响应为多层嵌套结构，解析逻辑拆到 `KooAuthParser.ets` 并补了本地单测，避免网络环境影响字段映射验证。
 - `hvigorw test` 会打包旧 H5 JS 参考文件，因此新增了最小本地 shim 解决 `socket.io-client / webrtc-adapter / Constants` 等解析问题；当前运行主链路仍是 ArkTS 版本。
+- 2026-06-05 真机 Mate X7 已安装签名 HAP 并进入双路直播态，`XComponent` surface 均加载成功；当前阻塞在 IAM 配置为空，页面和 hilog 均显示 `IAM config is incomplete`，尚未真正发起 IAM HTTP 请求。

@@ -64,14 +64,14 @@
 - `TAOBAO_CONFIG.kooAuth.authUrl`
 - `DOUYIN_CONFIG.kooAuth.authUrl`
 
-当前代码保留占位完整路径：
+2026-06-05 真机联调时已接入真实实例 ID，当前完整路径由 `KOOPHONE_AUTH_HOST` 和实例 ID 生成：
 
 ```text
-http://your-koophone-host:8669/openapi/koophone/v1/instances/your-taobao-kp-id/auth
-http://your-koophone-host:8669/openapi/koophone/v1/instances/your-douyin-kp-id/auth
+http://100.93.2.248:8669/openapi/koophone/v1/instances/dhb4q9j4/auth
+http://100.93.2.248:8669/openapi/koophone/v1/instances/sKuBZq7c/auth
 ```
 
-真实联调时只替换 host 和 kp_id，不需要再改 SDK 参数组装代码。
+后续更换实例时只替换 host 和 kp_id，不需要再改 SDK 参数组装代码。
 
 修改方法：
 - `buildKooPhoneParams(config, auth)`
@@ -142,6 +142,7 @@ http://your-koophone-host:8669/openapi/koophone/v1/instances/your-douyin-kp-id/a
 
 ## 安全处理
 
-- 未提交真实 IAM 账号、密码、KooPhone host、kp_id、设备 token。
+- 未提交真实 IAM 账号、密码、KooPhone `device_token`。
+- 当前提交包含用户提供的 KooPhone 内网 host 和两个实例 ID；远端仓库必须保持 private。
 - `build-profile.json5` 中的本机自签名信息仍保留在本地，不纳入提交。
 - 远端仓库 `worry-bit/livekit` 已确认是 `PRIVATE`。
