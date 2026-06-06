@@ -1,7 +1,7 @@
 import {
   KooAuthTokenResult,
   KooIceServer
-} from './KooPhoneTypes'
+} from './KooAuthTypes'
 
 interface KooAuthIceServer {
   uri?: string

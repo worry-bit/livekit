@@ -51,18 +51,6 @@
           ]
         }
       ]
-    },
-    {
-      "name": "LiveKit",
-      "srcPath": "./LiveKit",
-      "targets": [
-        {
-          "name": "default",
-          "applyToProducts": [
-            "default"
-          ]
-        }
-      ]
     }
   ]
 }

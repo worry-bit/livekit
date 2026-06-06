@@ -1,7 +1,7 @@
 /**
  * LiveKit WebRTC 引擎
  * 基于 @ohos/webrtc 官方 ArkTS API
- * 
+ *
  * API 文档: src/ohos_webrtc/sdk/ohos/api/libwebrtc.md
  */
 
@@ -37,18 +37,18 @@ export interface RTCEngineDelegate {
 export class RTCEngine {
   private signalClient: SignalClient
   private delegate: RTCEngineDelegate | null = null
-  
+
   // WebRTC 工厂
   private peerConnectionFactory: webrtc.PeerConnectionFactory | null = null
-  
+
   // 两个 PeerConnection：发布者和订阅者
   private publisherPC: webrtc.RTCPeerConnection | null = null
   private subscriberPC: webrtc.RTCPeerConnection | null = null
-  
+
   // ICE 配置
   private iceServers: ICEServer[] = []
   private subscriberPrimary: boolean = true
-  
+
   // 本地音频
   private audioSource: webrtc.AudioSource | null = null
   private audioTrack: webrtc.AudioTrack | null = null
@@ -103,7 +103,7 @@ export class RTCEngine {
     // 注意：暂时不使用自定义 AudioDeviceModule，因为会导致崩溃
     // TODO: 后续可以尝试其他方式切换到扬声器输出
     this.peerConnectionFactory = new webrtc.PeerConnectionFactory()
-    
+
     // RTCConfiguration
     const config: webrtc.RTCConfiguration = {
 
@@ -136,7 +136,7 @@ export class RTCEngine {
     // 创建订阅者 PeerConnection
     this.subscriberPC = this.peerConnectionFactory.createPeerConnection(config)
     this.setupPeerConnection(this.subscriberPC, SignalTarget.SUBSCRIBER)
-    
+
     console.info('[RTCEngine] PeerConnections created, checking for pending offer...')
 
     // 处理在 subscriberPC 就绪前缓存的 offer
@@ -165,24 +165,24 @@ export class RTCEngine {
         autoGainControl: options?.autoGainControl ?? true,
         noiseSuppression: options?.noiseSuppression ?? true
       }
-      
+
       this.audioSource = this.peerConnectionFactory.createAudioSource(constraints)
-      
+
       // 创建音频轨道
       const trackId = `audio_${Date.now()}`
       this.audioTrack = this.peerConnectionFactory.createAudioTrack(trackId, this.audioSource)
-      
+
       // 1. 先发送 AddTrackRequest 通知服务器
       // LiveKit 协议要求：在添加轨道到 PeerConnection 之前，必须先通知服务器
       // TrackType: AUDIO=0, VIDEO=1
       // TrackSource: MICROPHONE=2, CAMERA=1
       this.signalClient.sendAddTrack(trackId, 'audio', 0, 2)
       console.info('[RTCEngine] Sent AddTrackRequest for:', trackId)
-      
+
       // 2. 添加轨道到发布者 PeerConnection
       // 添加 track 会自动触发 onnegotiationneeded 事件
       this.publisherPC.addTrack(this.audioTrack)
-      
+
       console.info('[RTCEngine] Audio track added:', trackId)
 
     } catch (error) {
@@ -296,9 +296,8 @@ export class RTCEngine {
         this.videoTrack.stop()
       }
       if (this.videoSource) {
-        this.videoSource.release()
         this.videoSource = null
-        console.info('[RTCEngine] VideoSource released')
+        console.info('[RTCEngine] VideoSource cleared')
       }
 
       // 3. 从 PeerConnection 移除视频轨道（触发重新协商）
@@ -370,7 +369,9 @@ export class RTCEngine {
 
       // 释放旧资源
       prevVideoTrack.stop()
-      prevVideoSource?.release()
+      if (prevVideoSource) {
+        console.info('[RTCEngine] Previous VideoSource cleared')
+      }
 
       console.info('[RTCEngine] Camera switched to:', newFacingMode)
     } catch (error) {
@@ -406,7 +407,6 @@ export class RTCEngine {
       this.videoTrack = null
     }
     if (this.videoSource) {
-      this.videoSource.release()
       this.videoSource = null
     }
 
@@ -416,20 +416,20 @@ export class RTCEngine {
       this.audioTrack = null
     }
     this.audioSource = null
-    
+
     // 关闭 PeerConnections
     if (this.publisherPC) {
       this.publisherPC.close()
       this.publisherPC = null
     }
-    
+
     if (this.subscriberPC) {
       this.subscriberPC.close()
       this.subscriberPC = null
     }
-    
+
     this.peerConnectionFactory = null
-    
+
     // 重置状态
     this.pendingPublisherCandidates = []
     this.pendingSubscriberCandidates = []
@@ -437,7 +437,7 @@ export class RTCEngine {
     this.subscriberRemoteDescSet = false
     this.isNegotiating = false
     this.pendingOffer = null
-    
+
     console.info('[RTCEngine] Closed')
   }
 
@@ -449,7 +449,7 @@ export class RTCEngine {
   private setupSignalHandlers(): void {
     // 处理服务端 Offer（订阅者）
     this.signalClient.on('offer', async (response) => {
-      console.info('[RTCEngine] Received offer event, has offer:', !!response.offer, 
+      console.info('[RTCEngine] Received offer event, has offer:', !!response.offer,
         ', subscriberPC ready:', !!this.subscriberPC)
       if (response.offer) {
         if (this.subscriberPC) {
@@ -457,7 +457,7 @@ export class RTCEngine {
           await this.handleRemoteOffer(response.offer)
         } else {
           // subscriberPC 还未创建，先缓存 offer
-          console.info('[RTCEngine] subscriberPC not ready, caching offer, sdp length:', 
+          console.info('[RTCEngine] subscriberPC not ready, caching offer, sdp length:',
             response.offer.sdp?.length || 0)
           this.pendingOffer = response.offer
         }
@@ -484,7 +484,7 @@ export class RTCEngine {
    */
   private setupPeerConnection(pc: webrtc.RTCPeerConnection, target: SignalTarget): void {
     const targetName = target === SignalTarget.PUBLISHER ? 'pub' : 'sub'
-    
+
     // ICE Candidate
     pc.onicecandidate = (event: webrtc.RTCPeerConnectionIceEvent) => {
       console.info(`[RTCEngine] onicecandidate (${targetName}):`, event.candidate ? 'has candidate' : 'null/complete')
@@ -498,7 +498,7 @@ export class RTCEngine {
         this.signalClient.sendCandidate(candidateInit, target)
       }
     }
-    
+
     // ICE Gathering 状态
     pc.onicegatheringstatechange = () => {
       console.info(`[RTCEngine] ICE gathering state (${targetName}): ${pc.iceGatheringState}`)
@@ -565,16 +565,16 @@ export class RTCEngine {
         iceRestart: false
       }
       const offer = await this.publisherPC.createOffer(offerOptions)
-      
+
       // 设置本地描述
       await this.publisherPC.setLocalDescription(offer)
-      
+
       // 发送到服务端
       this.signalClient.sendOffer({
         type: 'offer',
         sdp: offer.sdp ? offer.sdp : ''
       })
-      
+
       console.info('[RTCEngine] Sent offer')
     } catch (error) {
       console.error('[RTCEngine] Negotiate error:', error)
@@ -609,27 +609,27 @@ export class RTCEngine {
       }
       await this.subscriberPC.setRemoteDescription(remoteDesc)
       console.info('[RTCEngine] handleRemoteOffer: remote description set')
-      
+
       // 标记已设置远程描述，并处理缓存的 candidates
       this.subscriberRemoteDescSet = true
       await this.flushPendingCandidates(false)
-      
+
       // 创建 Answer
       console.info('[RTCEngine] handleRemoteOffer: creating answer...')
       const answer = await this.subscriberPC.createAnswer()
       console.info('[RTCEngine] handleRemoteOffer: answer created')
-      
+
       // 设置本地描述 - 这会触发 ICE gathering
       console.info('[RTCEngine] handleRemoteOffer: setting local description (will trigger ICE gathering)...')
       await this.subscriberPC.setLocalDescription(answer)
       console.info('[RTCEngine] handleRemoteOffer: local description set, iceGatheringState:', this.subscriberPC.iceGatheringState)
-      
+
       // 发送到服务端
       this.signalClient.sendAnswer({
         type: 'answer',
         sdp: answer.sdp ? answer.sdp : ''
       })
-      
+
       console.info('[RTCEngine] Sent answer, sdp length:', answer.sdp?.length || 0)
     } catch (error) {
       console.error('[RTCEngine] Handle offer error:', error)
@@ -653,11 +653,11 @@ export class RTCEngine {
         }
       }
       await this.publisherPC.setRemoteDescription(remoteDesc)
-      
+
       // 标记已设置远程描述，并处理缓存的 candidates
       this.publisherRemoteDescSet = true
       await this.flushPendingCandidates(true)
-      
+
       console.info('[RTCEngine] Remote answer set')
     } catch (error) {
       console.error('[RTCEngine] Handle answer error:', error)
@@ -670,17 +670,17 @@ export class RTCEngine {
   private async handleRemoteCandidate(trickle: TrickleRequest): Promise<void> {
     const isPublisher = trickle.target === SignalTarget.PUBLISHER
     const pc = isPublisher ? this.publisherPC : this.subscriberPC
-    
+
     if (!pc) {
       return
     }
 
     try {
       const candidateInit: webrtc.RTCIceCandidateInit = JSON.parse(trickle.candidateInit)
-      
+
       // 检查 remote description 是否已设置
       const remoteDescSet = isPublisher ? this.publisherRemoteDescSet : this.subscriberRemoteDescSet
-      
+
       if (remoteDescSet) {
         // 已设置，直接添加
         await pc.addIceCandidate(candidateInit)
@@ -705,13 +705,13 @@ export class RTCEngine {
   private async flushPendingCandidates(isPublisher: boolean): Promise<void> {
     const pc = isPublisher ? this.publisherPC : this.subscriberPC
     const pending = isPublisher ? this.pendingPublisherCandidates : this.pendingSubscriberCandidates
-    
+
     if (!pc || pending.length === 0) {
       return
     }
 
     console.info('[RTCEngine] Flushing', pending.length, 'cached candidates (', isPublisher ? 'pub' : 'sub', ')')
-    
+
     for (let i = 0; i < pending.length; i++) {
       try {
         await pc.addIceCandidate(pending[i])
@@ -719,7 +719,7 @@ export class RTCEngine {
         console.error('[RTCEngine] Add cached candidate error:', error)
       }
     }
-    
+
     // 清空缓存
     if (isPublisher) {
       this.pendingPublisherCandidates = []

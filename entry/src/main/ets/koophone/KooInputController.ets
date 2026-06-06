@@ -15,15 +15,15 @@ const KEY_TYPE_TEXT_MSG: number = 211
 
 // ==================== Action 枚举（与 H5 Action 对应） ====================
 
-export const TouchAction = {
-  DOWN: 0,
-  UP: 1,
-  MOVE: 2
+export enum TouchAction {
+  DOWN = 0,
+  UP = 1,
+  MOVE = 2
 }
 
-export const KeyAction = {
-  DOWN: 0,
-  UP: 1
+export enum KeyAction {
+  DOWN = 0,
+  UP = 1
 }
 
 // ==================== 触点信息接口 ====================

@@ -6,7 +6,6 @@
   "author": "",
   "license": "",
   "dependencies": {
-    "livekit-harmony": "file:../LiveKit"
+    "@ohos/webrtc": "^1.0.0"
   }
 }
-

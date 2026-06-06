@@ -6,6 +6,8 @@ export class KooRTCSource {
   private pc: webrtc.RTCPeerConnection | null = null
   private localRenderer: webrtc.NativeVideoRenderer | null = null
   private surfaceId: string = ''
+  private rendererSurfaceId: string = ''
+  private remoteVideoTrack: webrtc.MediaStreamTrack | null = null
   private pendingCandidates: webrtc.RTCIceCandidateInit[] = []
   private remoteDescSet: boolean = false
 
@@ -13,7 +15,7 @@ export class KooRTCSource {
   private inputChannel: webrtc.RTCDataChannel | null = null
 
   // 事件回调
-  onDescription: ((desc: webrtc.RTCSessionDescription) => void) | null = null
+  onDescription: ((desc: webrtc.RTCSessionDescriptionInit) => void) | null = null
   onIceCandidate: ((candidate: webrtc.RTCIceCandidate) => void) | null = null
   onConnectionStateChange: ((state: webrtc.RTCPeerConnectionState) => void) | null = null
   onTrack: ((track: webrtc.MediaStreamTrack) => void) | null = null
@@ -55,8 +57,9 @@ export class KooRTCSource {
     // 创建 input DataChannel（对应 H5 RTCSource 中的 input channel）
     this.createInputChannel()
 
-    // 初始化本地渲染器（surfaceId 可能稍后通过 setSurfaceId 设置）
-    this.localRenderer = new webrtc.NativeVideoRenderer()
+    if (this.surfaceId.length > 0) {
+      this.rebuildRenderer()
+    }
 
     console.info('[KooRTCSource] PeerConnection created')
   }
@@ -65,17 +68,25 @@ export class KooRTCSource {
    * 设置 XComponent surfaceId 用于远端视频渲染
    */
   setSurfaceId(surfaceId: string): void {
+    if (this.surfaceId === surfaceId && this.rendererSurfaceId === surfaceId) {
+      return
+    }
+
     this.surfaceId = surfaceId
-    if (this.localRenderer && surfaceId) {
-      this.localRenderer.init(surfaceId)
-      console.info('[KooRTCSource] NativeVideoRenderer initialized, surfaceId:', surfaceId)
+    if (surfaceId.length === 0) {
+      this.releaseRenderer()
+      return
+    }
+
+    if (this.pc !== null) {
+      this.rebuildRenderer()
     }
   }
 
   /**
    * 收到服务端 offer，设置 remote description 并自动创建 answer
    */
-  async setRemoteDescription(sdp: webrtc.RTCSessionDescription): Promise<void> {
+  async setRemoteDescription(sdp: webrtc.RTCSessionDescriptionInit): Promise<void> {
     if (!this.pc) {
       console.error('[KooRTCSource] pc is null')
       return
@@ -133,11 +144,8 @@ export class KooRTCSource {
    * 顺序：renderer.setVideoTrack(null) → renderer.release() → pc.close()
    */
   close(): void {
-    if (this.localRenderer) {
-      this.localRenderer.setVideoTrack(null)
-      this.localRenderer.release()
-      this.localRenderer = null
-    }
+    this.releaseRenderer()
+    this.remoteVideoTrack = null
 
     if (this.inputChannel) {
       this.inputChannel.close()
@@ -150,6 +158,8 @@ export class KooRTCSource {
     }
 
     this.pcf = null
+    this.surfaceId = ''
+    this.rendererSurfaceId = ''
     this.remoteDescSet = false
     this.pendingCandidates = []
 
@@ -166,7 +176,11 @@ export class KooRTCSource {
     this.pc.ontrack = (event: webrtc.RTCTrackEvent) => {
       console.info('[KooRTCSource] Remote track received, kind:', event.track.kind)
       if (event.track.kind === 'video') {
-        if (this.localRenderer && this.surfaceId) {
+        this.remoteVideoTrack = event.track
+        if (!this.localRenderer && this.surfaceId.length > 0) {
+          this.rebuildRenderer()
+        }
+        if (this.localRenderer) {
           this.localRenderer.setVideoTrack(event.track)
           console.info('[KooRTCSource] Video track set to renderer')
         }
@@ -221,6 +235,40 @@ export class KooRTCSource {
     }
   }
 
+  private rebuildRenderer(): void {
+    if (this.surfaceId.length === 0) {
+      return
+    }
+
+    this.releaseRenderer()
+    this.localRenderer = new webrtc.NativeVideoRenderer()
+    this.localRenderer.init(this.surfaceId)
+    this.rendererSurfaceId = this.surfaceId
+
+    if (this.remoteVideoTrack) {
+      this.localRenderer.setVideoTrack(this.remoteVideoTrack)
+      console.info('[KooRTCSource] Video track rebound to renderer')
+    }
+    console.info('[KooRTCSource] NativeVideoRenderer initialized, surfaceId:', this.surfaceId)
+  }
+
+  private releaseRenderer(): void {
+    if (!this.localRenderer) {
+      this.rendererSurfaceId = ''
+      return
+    }
+
+    try {
+      this.localRenderer.setVideoTrack(null)
+      this.localRenderer.release()
+    } catch (e) {
+      console.warn('[KooRTCSource] releaseRenderer warning:', String(e))
+    }
+
+    this.localRenderer = null
+    this.rendererSurfaceId = ''
+  }
+
   private setupDataChannel(channel: webrtc.RTCDataChannel): void {
     this.inputChannel = channel
     channel.onopen = () => {
@@ -241,14 +289,12 @@ export class KooRTCSource {
     }
 
     try {
-      // pc.createAnswer() 返回 RTCSessionDescriptionInit，需转为 RTCSessionDescription
       const answerInit = await this.pc.createAnswer()
       await this.pc.setLocalDescription(answerInit)
       console.info('[KooRTCSource] Answer created and local description set')
 
-      // 构造完整的 RTCSessionDescription 传给回调
-      const answer: webrtc.RTCSessionDescription = {
-        type: answerInit.type as 'answer',
+      const answer: webrtc.RTCSessionDescriptionInit = {
+        type: answerInit.type,
         sdp: answerInit.sdp ?? ''
       }
       this.onDescription?.(answer)

@@ -1,5 +1,6 @@
-import { AudioLevelInfo, createLiveKitClient, LiveKitClient } from 'livekit-harmony'
 import { abilityAccessCtrl, common } from '@kit.AbilityKit'
+import { createLiveKitClient, LiveKitClient } from '../livekit/LiveKitClient'
+import { AudioLevelInfo } from '../livekit/types'
 import { RtcModel, SpeakerModel } from './RtcModel'
 
 /**
@@ -118,11 +119,8 @@ class LiveKitUtil {
     this.localVideoSurfaceId = surfaceId
     try {
       await this.client.publishVideo(surfaceId)
-      this.isVideoPublished = this.client.videoPublished
-      if (!this.isVideoPublished) {
-        this.errorMessage = 'LiveKit 视频发布失败'
-      }
-      return this.isVideoPublished
+      this.isVideoPublished = true
+      return true
     } catch (error) {
       this.isVideoPublished = false
       this.errorMessage = String(error)
@@ -135,18 +133,14 @@ class LiveKitUtil {
    * 取消发布本机摄像头视频，并释放 SDK 内部的视频轨道和本地渲染器。
    */
   async unpublishVideo(): Promise<boolean> {
-    if (!this.isVideoPublished && !this.client.videoPublished) {
+    if (!this.isVideoPublished) {
       this.localVideoSurfaceId = ''
       return true
     }
 
     try {
       await this.client.unpublishVideo()
-      this.isVideoPublished = this.client.videoPublished
-      if (this.isVideoPublished) {
-        this.errorMessage = 'LiveKit 视频取消发布失败'
-        return false
-      }
+      this.isVideoPublished = false
       this.localVideoSurfaceId = ''
       return true
     } catch (error) {
@@ -160,7 +154,7 @@ class LiveKitUtil {
    * 切换前/后摄像头。只有视频已经发布后才允许切换，避免无轨道时调用底层 SDK。
    */
   async switchCamera(): Promise<boolean> {
-    if (!this.isVideoPublished && !this.client.videoPublished) {
+    if (!this.isVideoPublished) {
       this.errorMessage = '请先开始直播推流，再切换摄像头'
       return false
     }

@@ -5,6 +5,7 @@ import {
   KooPhoneState,
   KooPhoneError,
   KooSignalMessage,
+  KooSignalPayload,
   KooStartPayload,
   OnStateChange,
   OnTrack,
@@ -54,6 +55,7 @@ export class KooPhonePlayer {
   private streamingId: string = ''
   private sessionId: string = ''
   private uuid: string = ''
+  private currentSurfaceId: string = ''
 
   private signalClient: KooSignalClient = new KooSignalClient()
   private rtcSource: KooRTCSource = new KooRTCSource()
@@ -66,6 +68,15 @@ export class KooPhonePlayer {
 
   get state(): KooPhoneState {
     return this._state
+  }
+
+  /**
+   * 更新远端视频渲染 surface。折叠屏展开/折叠时 XComponent 可能重建，
+   * 调用方可用新 surfaceId 让播放器继续渲染到当前可见区域。
+   */
+  setSurfaceId(surfaceId: string): void {
+    this.currentSurfaceId = surfaceId
+    this.rtcSource.setSurfaceId(surfaceId)
   }
 
   /**
@@ -85,12 +96,14 @@ export class KooPhonePlayer {
     }
 
     this.params = params
-    // 生成会话标识（对应 H5 _open() 中的 streamingid/sessionid/uuid）
-    this.streamingId = this.randomUuid()
+    this.currentSurfaceId = surfaceId
+    // 生成会话标识（对应 H5 _open() 中的 streamingid/sessionid/uuid）。
+    // KooPhone 实例鉴权返回 streamingId 时优先使用服务端返回值。
+    this.streamingId = params.streamingId ?? this.randomUuid()
     this.sessionId = params.sessionId ?? params.token
     this.uuid = params.uuid ?? this.randomUuid()
 
-    this.setupSignalHandlers(surfaceId)
+    this.setupSignalHandlers()
     this.setupRTCHandlers()
 
     this.stateChange(KooPhoneState.CONNECTING)
@@ -101,7 +114,7 @@ export class KooPhonePlayer {
     query += `&streamingid=${this.streamingId}`
     this.signalClient.connect(params.signalingUrl, query)
 
-    console.info('[KooPhonePlayer] Opening, boxId:', params.boxId)
+    console.info('[KooPhonePlayer] Opening, boxId:', this.maskId(params.boxId))
   }
 
   /**
@@ -121,6 +134,7 @@ export class KooPhonePlayer {
     this.streamingId = ''
     this.sessionId = ''
     this.uuid = ''
+    this.currentSurfaceId = ''
     this.params = null
 
     this.stateChange(KooPhoneState.CLOSED)
@@ -129,7 +143,7 @@ export class KooPhonePlayer {
 
   // ==================== 私有方法 ====================
 
-  private setupSignalHandlers(surfaceId: string): void {
+  private setupSignalHandlers(): void {
     this.signalClient.onAuthorize = (authorized: boolean) => {
       if (!authorized) {
         this.emitError(KooPhoneError.SIGNAL_AUTH_FAILED, 'Signal authorization failed')
@@ -153,7 +167,7 @@ export class KooPhonePlayer {
       // 初始化 RTCPeerConnection
       this.stateChange(KooPhoneState.PEER_CONNECTING)
       this.rtcSource.open(this.params?.iceServers ?? [])
-      this.rtcSource.setSurfaceId(surfaceId)
+      this.rtcSource.setSurfaceId(this.currentSurfaceId)
 
       // 发送 init 请求触发 boxrtc 开始 WebRTC 协商
       this.sendInit()
@@ -166,25 +180,33 @@ export class KooPhonePlayer {
     this.signalClient.onClosed = () => {
       console.info('[KooPhonePlayer] Signal connection closed')
       if (this._state !== KooPhoneState.CLOSED) {
+        this.emitError(KooPhoneError.SIGNAL_CONNECT_FAILED, 'Signal connection closed before stream was ready')
+        this.close()
+      }
+    }
+
+    this.signalClient.onError = (message: string) => {
+      if (this._state !== KooPhoneState.CLOSED) {
+        this.emitError(KooPhoneError.SIGNAL_CONNECT_FAILED, message)
         this.close()
       }
     }
   }
 
   private setupRTCHandlers(): void {
-    this.rtcSource.onDescription = (desc: webrtc.RTCSessionDescription) => {
+    this.rtcSource.onDescription = (desc: webrtc.RTCSessionDescriptionInit) => {
       // answer 创建完成，通过信令发送给 boxrtc
       console.info('[KooPhonePlayer] Sending answer')
-      const payload: Record<string, Object> = {
+      const payload: KooSignalPayload = {
         type: desc.type,
-        sdp: desc.sdp
+        sdp: desc.sdp ?? ''
       }
       this.signalClient.emitMessage('answer', this.remoteId, payload)
     }
 
     this.rtcSource.onIceCandidate = (candidate: webrtc.RTCIceCandidate) => {
       // 发送本地 ICE candidate（与 H5 _onLocalIceCandidate 格式一致）
-      const payload: Record<string, Object> = {
+      const payload: KooSignalPayload = {
         label: candidate.sdpMLineIndex ?? 0,
         id: candidate.sdpMid ?? '',
         candidate: candidate.candidate
@@ -243,16 +265,23 @@ export class KooPhonePlayer {
 
     // base64 编码（与 H5 btoa(JSON.stringify(params)) 一致）
     const jsonStr = JSON.stringify(initPayload)
-    console.info('[KooPhonePlayer] Init payload JSON:', jsonStr)
+    console.info('[KooPhonePlayer] Init payload prepared, jsonLength:', jsonStr.length,
+      'sessionId:', this.maskId(this.sessionId), 'streamingId:', this.maskId(this.streamingId))
     const encoder = new util.TextEncoder()
     const bytes = encoder.encodeInto(jsonStr)
     const base64Helper = new util.Base64Helper()
     const encoded = base64Helper.encodeToStringSync(bytes)
-    console.info('[KooPhonePlayer] Init payload base64:', encoded)
 
     console.info('[KooPhonePlayer] Sending init, remoteId:', this.remoteId,
-      'uuid:', this.uuid, 'streamingId:', this.streamingId)
+      'uuid:', this.maskId(this.uuid), 'streamingId:', this.maskId(this.streamingId))
     this.signalClient.emitData('init', this.remoteId, encoded)
+  }
+
+  private maskId(value: string): string {
+    if (value.length <= 8) {
+      return '***'
+    }
+    return `${value.substring(0, 4)}...${value.substring(value.length - 4)}`
   }
 
   private handleSignalMessage(message: KooSignalMessage): void {
@@ -271,13 +300,13 @@ export class KooPhonePlayer {
         return
       }
       const sdpPayload: SdpPayload = {
-        type: raw['type'] as string,
-        sdp: raw['sdp'] as string
+        type: raw.type ?? '',
+        sdp: raw.sdp ?? ''
       }
       console.info('[KooPhonePlayer] offer sdp type:', sdpPayload.type,
         'sdp length:', sdpPayload.sdp?.length ?? 0)
-      const sdp: webrtc.RTCSessionDescription = {
-        type: sdpPayload.type as 'offer',
+      const sdp: webrtc.RTCSessionDescriptionInit = {
+        type: sdpPayload.type as webrtc.RTCSdpType,
         sdp: sdpPayload.sdp
       }
       this.rtcSource.setRemoteDescription(sdp)
@@ -287,11 +316,11 @@ export class KooPhonePlayer {
         return
       }
       const sdpPayload: SdpPayload = {
-        type: raw['type'] as string,
-        sdp: raw['sdp'] as string
+        type: raw.type ?? '',
+        sdp: raw.sdp ?? ''
       }
-      const sdp: webrtc.RTCSessionDescription = {
-        type: sdpPayload.type as 'answer',
+      const sdp: webrtc.RTCSessionDescriptionInit = {
+        type: sdpPayload.type as webrtc.RTCSdpType,
         sdp: sdpPayload.sdp
       }
       this.rtcSource.setRemoteDescription(sdp)
@@ -300,9 +329,9 @@ export class KooPhonePlayer {
         return
       }
       const candidatePayload: CandidatePayload = {
-        label: raw['label'] as number,
-        id: raw['id'] as string,
-        candidate: raw['candidate'] as string
+        label: raw.label ?? 0,
+        id: raw.id ?? '',
+        candidate: raw.candidate ?? ''
       }
       console.info('[KooPhonePlayer] Remote candidate, id:', candidatePayload.id)
       const candidateInit: webrtc.RTCIceCandidateInit = {
@@ -324,7 +353,7 @@ export class KooPhonePlayer {
    * 对应 H5 CloudPlayer._onRemoteMessage() 第 806-808 行：
    *   if (!payload && !!message.data) payload = JSON.parse(Base64.decode(message.data))
    */
-  private resolvePayload(message: KooSignalMessage): Record<string, Object> | null {
+  private resolvePayload(message: KooSignalMessage): KooSignalPayload | null {
     if (message.payload) {
       return message.payload
     }
@@ -335,7 +364,7 @@ export class KooPhonePlayer {
         const decoder = new util.TextDecoder()
         const jsonStr = decoder.decodeToString(bytes)
         console.info('[KooPhonePlayer] Decoded data field:', jsonStr.substring(0, 100))
-        return JSON.parse(jsonStr) as Record<string, Object>
+        return JSON.parse(jsonStr) as KooSignalPayload
       } catch (e) {
         console.error('[KooPhonePlayer] Failed to decode message.data:', String(e))
       }
@@ -353,9 +382,9 @@ export class KooPhonePlayer {
       } else if (i === 14) {
         uuid += '4'
       } else if (i === 19) {
-        uuid += hex[(Math.random() * 4 | 0) + 8]
+        uuid += hex.charAt((Math.random() * 4 | 0) + 8)
       } else {
-        uuid += hex[Math.random() * 16 | 0]
+        uuid += hex.charAt(Math.random() * 16 | 0)
       }
     }
     return uuid

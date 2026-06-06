@@ -1,33 +1,27 @@
 import liveKitUtil from '../rtc/LiveKitUtil'
+import { createKooAuthService, KooAuthService } from '../koophone/KooAuthService'
+import { KooAuthTokenResult, LivePlatformConfig } from '../koophone/KooAuthTypes'
+import { KooInputController, TouchAction, TouchPoint } from '../koophone/KooInputController'
+import { KooInstancePoolEntry, selectNextAvailableKooInstance } from '../koophone/KooInstancePool'
 import {
-  createKooAuthService,
-  createKooPhonePlayer,
-  KooAuthService,
-  KooInputController,
-  KooPhoneError,
-  KooPhoneParams,
-  KooPhonePlayer,
-  KooPhoneState,
-  KooAuthTokenResult,
-  KooInstancePoolEntry,
-  canToggleLiveKitPush,
-  LivePlatformConfig,
-  buildLiveKitPreviewComponentId,
   buildKooLiveSurfaceComponentId,
   canStartKooLiveAddSelection,
-  getLiveKitPushButtonColor,
-  getLiveKitPushButtonText,
   getKooLiveAddOptionTitle,
-  isLiveKitPushConfigReady,
   isKooLiveAddOptionDisabled,
   resolveKooFoldedVisibleSlot,
-  selectNextAvailableKooInstance,
   shouldRenderKooFoldedSwitch,
-  shouldStopLiveKitPush,
-  shouldShowKooLiveAddPanel,
-  TouchAction,
-  TouchPoint
-} from 'livekit-harmony'
+  shouldShowKooLiveAddPanel
+} from '../koophone/KooLiveSlotPolicy'
+import {
+  buildLiveKitPreviewComponentId,
+  canToggleLiveKitPush,
+  getLiveKitPushButtonColor,
+  getLiveKitPushButtonText,
+  isLiveKitPushConfigReady,
+  shouldStopLiveKitPush
+} from '../push/LiveKitPushPolicy'
+import { createKooPhonePlayer, KooPhonePlayer } from '../koophone/KooPhonePlayer'
+import { KooPhoneError, KooPhoneParams, KooPhoneState } from '../koophone/KooPhoneTypes'
 
 enum LivePlatform {
   TAOBAO = 'taobao',
@@ -146,33 +140,48 @@ struct Index1 {
   @State liveKitPreviewRevision: number = 0
 
   aboutToAppear(): void {
-    this.taobaoPlayer.onStateChange = (s: KooPhoneState) => {
-      this.handlePlatformStateChange(LivePlatform.TAOBAO, s)
-    }
-
-    this.taobaoPlayer.onError = (code: KooPhoneError, msg: string) => {
-      this.handlePlatformError(LivePlatform.TAOBAO, code, msg)
-    }
-
-    this.taobaoPlayer.onTrack = () => {
-      console.info('[Index1] Taobao remote video track received')
-    }
-
-    this.douyinPlayer.onStateChange = (s: KooPhoneState) => {
-      this.handlePlatformStateChange(LivePlatform.DOUYIN, s)
-    }
-
-    this.douyinPlayer.onError = (code: KooPhoneError, msg: string) => {
-      this.handlePlatformError(LivePlatform.DOUYIN, code, msg)
-    }
-
-    this.douyinPlayer.onTrack = () => {
-      console.info('[Index1] Douyin remote video track received')
-    }
+    this.attachPlatformPlayerHandlers(LivePlatform.TAOBAO)
+    this.attachPlatformPlayerHandlers(LivePlatform.DOUYIN)
   }
 
   aboutToDisappear(): void {
     this.closeAllStreams()
+  }
+
+  /**
+   * SDK 只暴露 open/close/inputController 这些原子能力；页面侧负责播放器生命周期。
+   * 每次 entry 重建播放器后，都必须重新挂回状态、错误和 track 回调。
+   */
+  private attachPlatformPlayerHandlers(platform: LivePlatform): void {
+    const player = this.getPlatformPlayer(platform)
+    player.onStateChange = (s: KooPhoneState) => {
+      this.handlePlatformStateChange(platform, s)
+    }
+    player.onError = (code: KooPhoneError, msg: string) => {
+      this.handlePlatformError(platform, code, msg)
+    }
+    player.onTrack = () => {
+      console.info(`[Index1] ${this.getPlatformTitle(platform)} remote video track received`)
+    }
+  }
+
+  private setPlatformPlayer(platform: LivePlatform, player: KooPhonePlayer): void {
+    if (platform === LivePlatform.TAOBAO) {
+      this.taobaoPlayer = player
+      return
+    }
+    this.douyinPlayer = player
+  }
+
+  /**
+   * 停止、重试或补开某一路直播前，entry 侧关闭旧播放器并创建新播放器。
+   * 这样不需要在 SDK 内新增 setSurfaceId 之类的重绑定接口，也能让下一次
+   * open 绑定当前 XComponent 的 surfaceId。
+   */
+  private recreatePlatformPlayer(platform: LivePlatform): void {
+    this.getPlatformPlayer(platform).close()
+    this.setPlatformPlayer(platform, createKooPhonePlayer())
+    this.attachPlatformPlayerHandlers(platform)
   }
 
   /**
@@ -472,6 +481,7 @@ struct Index1 {
 
   private resetPlatformRuntime(platform: LivePlatform): void {
     this.clearRetryTimer(platform)
+    this.recreatePlatformPlayer(platform)
     if (platform === LivePlatform.TAOBAO) {
       this.taobaoStarted = false
       this.taobaoStarting = false
@@ -553,7 +563,7 @@ struct Index1 {
   private invalidatePlatformSurface(platform: LivePlatform): void {
     this.setPlatformReady(platform, false)
     this.setPlatformSurfaceId(platform, '')
-    this.getPlatformPlayer(platform).setSurfaceId('')
+    this.recreatePlatformPlayer(platform)
     if (platform === LivePlatform.TAOBAO) {
       this.taobaoXCtrl = new XComponentController()
     } else {
@@ -603,7 +613,6 @@ struct Index1 {
 
     this.setPlatformSurfaceId(platform, surfaceId)
     this.setPlatformReady(platform, true)
-    this.getPlatformPlayer(platform).setSurfaceId(surfaceId)
   }
 
   /**
@@ -612,9 +621,6 @@ struct Index1 {
    */
   private syncPlatformSurfaceAndStart(platform: LivePlatform): void {
     this.refreshPlatformSurfaceId(platform)
-    if (this.getPlatformSurfaceId(platform).length > 0) {
-      this.getPlatformPlayer(platform).setSurfaceId(this.getPlatformSurfaceId(platform))
-    }
     this.startPlatformIfReady(platform)
   }
 
@@ -672,7 +678,6 @@ struct Index1 {
       signalingUrl: auth.signalingUrl,
       boxId: auth.boxId,
       token: auth.token,
-      streamingId: auth.streamingId,
       iceServers: auth.iceServers ?? config.iceServers,
       mode: config.mode,
       role: config.role,
@@ -1107,7 +1112,6 @@ struct Index1 {
     this.foldedVisiblePlatform = this.foldedVisiblePlatform === LivePlatform.TAOBAO ?
       LivePlatform.DOUYIN :
       LivePlatform.TAOBAO
-    this.getPlatformPlayer(this.foldedVisiblePlatform).setSurfaceId(this.getPlatformSurfaceId(this.foldedVisiblePlatform))
   }
 
   /**
@@ -1163,7 +1167,7 @@ struct Index1 {
     this.clearRetryTimer(platform)
     this.setPlatformStarted(platform, false)
     this.setPlatformStarting(platform, false)
-    this.getPlatformPlayer(platform).close()
+    this.recreatePlatformPlayer(platform)
 
     const currentRetryCount = this.getRetryCount(platform)
     if (currentRetryCount >= MAX_STREAM_RETRY) {
@@ -1496,7 +1500,6 @@ struct Index1 {
         if (!this.shouldStartPlatform(LivePlatform.TAOBAO)) {
           this.setPlatformReady(LivePlatform.TAOBAO, false)
           this.setPlatformSurfaceId(LivePlatform.TAOBAO, '')
-          this.taobaoPlayer.setSurfaceId('')
         }
       })
       .onAreaChange((_old: Area, newArea: Area) => {
@@ -1529,7 +1532,6 @@ struct Index1 {
       if (!this.shouldStartPlatform(LivePlatform.DOUYIN)) {
         this.setPlatformReady(LivePlatform.DOUYIN, false)
         this.setPlatformSurfaceId(LivePlatform.DOUYIN, '')
-        this.douyinPlayer.setSurfaceId('')
       }
     })
     .onAreaChange((_old: Area, newArea: Area) => {

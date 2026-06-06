@@ -4,7 +4,7 @@ import {
   KooAuthConfig,
   KooAuthTokenResult,
   LivePlatformConfig
-} from './KooPhoneTypes'
+} from './KooAuthTypes'
 import { parseKooInstanceAuthResponse } from './KooAuthParser'
 
 const DEFAULT_CONNECT_TIMEOUT_MS = 5000

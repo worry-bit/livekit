@@ -57,6 +57,8 @@ flowchart TD
   Input -->|"DataChannel input"| RTC
 ```
 
+当前图中的 `KooAuthService / KooPhonePlayer / KooRTCSource / KooSignalClient / LiveKitClient / RTCEngine` 均位于 `entry/src/main/ets/**`。`LiveKit` SDK 模块已恢复到最开始拉取的状态，当前 App 不再通过 `livekit-harmony: file:../LiveKit` 消费这些业务实现。
+
 ## 3. 点击后代码怎么走
 
 选择页由 `Index1.selectionPage()` 构建。
@@ -114,7 +116,7 @@ platformOption(platform, title)
   -> startPlatformIfReady(platform)
 ```
 
-`syncPlatformSurfaceAndStart(platform)` 会主动从当前平台的 `XComponentController` 读取最新 `surfaceId` 并调用 `KooPhonePlayer.setSurfaceId()`。如果 ArkUI 此刻还没把新 `XComponent` 挂上，`schedulePlatformSurfaceSync(platform)` 会在短延迟后再同步一次，最终仍由 `XComponent.onLoad()` 兜底触发启动。这是为了解决停止某一路后马上补开时，内屏槽位还停留在“暂无直播内容”、画面等到折叠/展开后才出现的竞态。
+`syncPlatformSurfaceAndStart(platform)` 会主动从当前平台的 `XComponentController` 读取最新 `surfaceId`，然后调用 `startPlatformIfReady(platform)`。真正开流时，`KooPhonePlayer.open(params, surfaceId)` 会把播放器绑定到当前槽位的 native surface。如果 ArkUI 此刻还没把新 `XComponent` 挂上，`schedulePlatformSurfaceSync(platform)` 会在短延迟后再同步一次，最终仍由 `XComponent.onLoad()` 兜底触发启动。这是为了解决停止某一路后马上补开时，内屏槽位还停留在“暂无直播内容”、画面等到折叠/展开后才出现的竞态。
 
 外屏停止当前直播后再展开内屏补开时，还会走 `invalidatePlatformSurface(platform)`。该方法会清空旧 `surfaceId`、替换该平台的 `XComponentController`，并递增 `taobaoSurfaceRevision / douyinSurfaceRevision`。`taobaoSurface()` 和 `douyinSurface()` 会把 revision 拼进 `XComponent({ id })`，强制 ArkUI 为补开的直播创建当前内屏槽位的新 native surface，避免播放器继续绑定外屏旧 surface。
 
@@ -191,7 +193,7 @@ sequenceDiagram
   Signal-->>Player: authorize
   Player->>Signal: start(room=boxId)
   Signal-->>Player: start(streamId)
-  Player->>RTC: open() + setSurfaceId()
+  Player->>RTC: open(surfaceId)
   Player->>Signal: message(init)
   Signal-->>Player: message(offer)
   Player->>RTC: setRemoteDescription(offer)
@@ -274,7 +276,7 @@ WebSocket / WebRTC 失败
 - 同一实例的三次延迟分别是 800ms、1600ms、2400ms。
 - 每次重试都会重新获取 IAM token 和 KooPhone SDK token。
 - 当前实例 3 次失败后调用 `switchToNextAvailableInstance(platform)`。
-- 备用实例由 `LiveKit/src/main/ets/koophone/KooInstancePool.ets` 的 `selectNextAvailableKooInstance()` 选择。
+- 备用实例由 `entry/src/main/ets/koophone/KooInstancePool.ets` 的 `selectNextAvailableKooInstance()` 选择。
 - 候选实例必须不是当前实例、本平台本轮没尝试过、没有被另一直播正在使用。
 - 共享池耗尽后，该路显示失败；另一直播继续播放或继续自己的重试流程。
 
@@ -381,14 +383,14 @@ http://<koophone-host>:8669/openapi/koophone/v1/instances/<kp_id>/auth
 - DevEco Studio 需要 Apple Silicon 版本；x86 版本已卸载。
 - DevEco SDK Manager 下载镜像时出现过 100KB 级别截断包，需要用断点续传补齐。
 - Mate X7 通过 Emulator CLI 创建，实例名为 `Mate_X7_LiveKit`。
-- `entry` 依赖本地 HAR：`livekit-harmony: file:../LiveKit`，页面层应从包入口导入，不要跨模块深层相对路径导入。
+- `entry` 最初依赖本地 HAR：`livekit-harmony: file:../LiveKit`；后续为了避免修改 SDK，当前 App 已改成在 `entry` 内持有 KooPhone/LiveKit 适配实现，`LiveKit` 模块回到初始状态。
 - ArkTS 不支持 `headers['X-Subject-Token']` 这种动态索引读字段，IAM header 读取改为字符串解析。
 - ArkUI `Button` 默认样式会覆盖禁用态颜色，所以选择页按钮和停止按钮均用 `Row + Text` 自绘。
 - `build-profile.json5` 仍包含同事机器的签名路径；本机自签名材料不应提交到 git。
 - DevEco Emulator CLI 未提供折叠/展开控制，需要用图形工具栏或真机完成外屏截图。
 - KooPhone auth 真实响应为多层嵌套结构，解析逻辑拆到 `KooAuthParser.ets` 并补了本地单测，避免网络环境影响字段映射验证。
 - 实例池切换逻辑拆到 `KooInstancePool.ets`，避免把“跳过当前实例、跳过已尝试实例、跳过被占用实例”的规则散落在 ArkUI 页面里。
-- `hvigorw test` 会打包旧 H5 JS 参考文件，因此新增了最小本地 shim 解决 `socket.io-client / webrtc-adapter / Constants` 等解析问题；当前运行主链路仍是 ArkTS 版本。
+- 早期 `hvigorw test` 会打包旧 H5 JS 参考文件，因此曾在 SDK 侧补过最小 shim；本轮重构后这些 SDK 侧 shim 已撤回，App 构建只包含 `entry`。
 - 2026-06-05 首次真机 Mate X7 验证时，签名 HAP 已安装并进入双路直播态，`XComponent` surface 均加载成功；当时阻塞在 IAM 配置为空，页面和 hilog 均显示 `IAM config is incomplete`，尚未真正发起 IAM HTTP 请求。
 - 2026-06-05 补齐测试环境 IAM 参数后，真机 Mate X7 双路串流已成功，两路均进入 `playing`；提交前 IAM 账号密码已恢复为占位符。
 - 真机 hilog 曾暴露短效 `device_token/sessionid`，已将 `KooSignalClient` 和 `KooPhonePlayer` 的 URL、start、init 日志改为脱敏输出。

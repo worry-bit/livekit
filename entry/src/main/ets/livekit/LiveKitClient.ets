@@ -1,7 +1,7 @@
 /**
  * LiveKit 鸿蒙客户端
  * 基于 @ohos/webrtc 官方 ArkTS API
- * 
+ *
  * 使用方法:
  *   import { LiveKitClient } from '@aspect/harmony-livekit'
  *   const client = new LiveKitClient()
@@ -36,14 +36,14 @@ export class LiveKitClient implements RTCEngineDelegate {
   private _roomInfo: RoomInfo | null = null
   private _localParticipant: ParticipantInfo | null = null
   private _remoteParticipants: Map<string, ParticipantInfo> = new Map()
-  
+
   // 组件
   private signalClient: SignalClient
   private rtcEngine: RTCEngine
-  
+
   // 事件处理
   private eventHandlers: Map<RoomEventType, RoomEventHandler[]> = new Map()
-  
+
   // 音频状态
   private isAudioPublished: boolean = false
   private isMuted: boolean = false
@@ -61,7 +61,7 @@ export class LiveKitClient implements RTCEngineDelegate {
     this.signalClient = new SignalClient()
     this.rtcEngine = new RTCEngine(this.signalClient)
     this.rtcEngine.setDelegate(this)
-    
+
     this.setupSignalEventHandlers()
   }
 
@@ -91,11 +91,15 @@ export class LiveKitClient implements RTCEngineDelegate {
     return this._state === RoomState.CONNECTED
   }
 
+  get videoPublished(): boolean {
+    return this.isVideoPublished
+  }
+
   // ==================== 公共 API ====================
 
   /**
    * 连接到 LiveKit 房间
-   * 
+   *
    * @param url LiveKit 服务器地址，如 wss://server.com
    * @param token JWT 令牌
    * @param options 连接选项
@@ -112,30 +116,30 @@ export class LiveKitClient implements RTCEngineDelegate {
     try {
       this._state = RoomState.CONNECTING
       this.emit('reconnecting', { type: 'reconnecting' })
-      
+
       console.info(`[LiveKitClient] Connecting to ${url}`)
-      
+
       // 1. 建立 WebSocket 信令连接
       const joinResponse = await this.signalClient.connect(url, token)
-      
+
       console.info('[LiveKitClient] Signal connected, room:', joinResponse.room.name)
-      
+
       // 2. 保存房间和参与者信息
       this._roomInfo = joinResponse.room
       this._localParticipant = joinResponse.participant
-      
+
       const otherParticipants = joinResponse.otherParticipants
       for (let i = 0; i < otherParticipants.length; i++) {
         this._remoteParticipants.set(otherParticipants[i].sid, otherParticipants[i])
       }
-      
+
       // 3. 配置并创建 RTC 引擎
       this.rtcEngine.configure(
         joinResponse.iceServers,
         joinResponse.subscriberPrimary
       )
       await this.rtcEngine.createPeerConnections()
-      
+
       // 3.5 智能音频路由：有耳机走耳机，无耳机走扬声器，并监听插拔自动切换
       await this.rtcEngine.setupSmartAudioRouting()
 
@@ -149,7 +153,7 @@ export class LiveKitClient implements RTCEngineDelegate {
       }
 
       console.info('[LiveKitClient] Connected successfully')
-      
+
     } catch (error) {
       console.error('[LiveKitClient] Connect failed:', error)
       this._state = RoomState.DISCONNECTED
@@ -165,9 +169,9 @@ export class LiveKitClient implements RTCEngineDelegate {
     if (this._state === RoomState.DISCONNECTED) {
       return
     }
-    
+
     console.info('[LiveKitClient] Disconnecting...')
-    
+
     try {
       // 0. 停止音频电平观察
       this.stopAudioLevelObserver()
@@ -190,11 +194,11 @@ export class LiveKitClient implements RTCEngineDelegate {
 
       // 5. 关闭信令连接
       this.signalClient.close()
-      
+
     } catch (error) {
       console.error('[LiveKitClient] Disconnect error:', error)
     }
-    
+
     // 清理状态
     this._state = RoomState.DISCONNECTED
     this._roomInfo = null
@@ -223,10 +227,10 @@ export class LiveKitClient implements RTCEngineDelegate {
     try {
       await this.rtcEngine.publishAudio(options)
       this.isAudioPublished = true
-      
+
       console.info('[LiveKitClient] Audio published')
       this.emit('trackPublished', { kind: 'audio' })
-      
+
     } catch (error) {
       console.error('[LiveKitClient] Publish audio failed:', error)
       // throw error
@@ -314,7 +318,7 @@ export class LiveKitClient implements RTCEngineDelegate {
   setMuted(muted: boolean): void {
     this.isMuted = muted
     this.rtcEngine.setAudioMuted(muted)
-    
+
     console.info(`[LiveKitClient] Audio ${muted ? 'muted' : 'unmuted'}`)
     this.emit(muted ? 'trackMuted' : 'trackUnmuted', { kind: 'audio' })
   }
@@ -424,7 +428,7 @@ export class LiveKitClient implements RTCEngineDelegate {
    */
   onTrackAdded(track: webrtc.MediaStreamTrack, streams: webrtc.MediaStream[]): void {
     console.info('[LiveKitClient] Remote track added:', track.kind)
-    
+
     // WebRTC 会自动播放远程音频
     this.emit('trackSubscribed', { track, streams })
   }
@@ -442,7 +446,7 @@ export class LiveKitClient implements RTCEngineDelegate {
    */
   onConnectionStateChanged(state: webrtc.RTCPeerConnectionState): void {
     console.info('[LiveKitClient] RTC connection state:', state)
-    
+
     if (state === 'failed') {
       this.emit('reconnecting', { type: 'reconnecting' })
       // TODO: 实现自动重连逻辑
@@ -460,7 +464,7 @@ export class LiveKitClient implements RTCEngineDelegate {
     // 参与者更新
     this.signalClient.on('participantUpdate', (response) => {
       if (!response.update) return
-      
+
       const participants = response.update.participants
       for (let i = 0; i < participants.length; i++) {
         const info = participants[i]
@@ -469,18 +473,18 @@ export class LiveKitClient implements RTCEngineDelegate {
           this._localParticipant = info
           continue
         }
-        
+
         // 远程参与者离开
         if (info.state === 3) { // DISCONNECTED
           this._remoteParticipants.delete(info.sid)
           this.emit('participantDisconnected', { participant: info })
           continue
         }
-        
+
         // 远程参与者加入或更新
         const isNew = !this._remoteParticipants.has(info.sid)
         this._remoteParticipants.set(info.sid, info)
-        
+
         if (isNew) {
           this.emit('participantConnected', { participant: info })
         }
@@ -497,8 +501,8 @@ export class LiveKitClient implements RTCEngineDelegate {
     // 说话者变化
     this.signalClient.on('speakersChanged', (response) => {
       if (response.speakersChanged) {
-        this.emit('activeSpeakersChanged', { 
-          speakers: response.speakersChanged.speakers 
+        this.emit('activeSpeakersChanged', {
+          speakers: response.speakersChanged.speakers
         })
       }
     })

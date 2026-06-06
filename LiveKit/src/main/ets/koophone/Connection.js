@@ -1,5 +1,5 @@
 import * as Constants from './Constants';
-import SocketIO from './lib/SocketIOClient';
+import SocketIO from 'socket.io-client';
 import * as ErrCode from './ErrCode';
 import log from './util/ConsoleLog';
 
