@@ -109,6 +109,8 @@ platformOption(platform, title)
 
 外屏停止当前直播后再展开内屏补开时，还会走 `invalidatePlatformSurface(platform)`。该方法会清空旧 `surfaceId`、替换该平台的 `XComponentController`，并递增 `taobaoSurfaceRevision / douyinSurfaceRevision`。`taobaoSurface()` 和 `douyinSurface()` 会把 revision 拼进 `XComponent({ id })`，强制 ArkUI 为补开的直播创建当前内屏槽位的新 native surface，避免播放器继续绑定外屏旧 surface。
 
+补开后内屏能否立即从“暂无直播内容”切到直播 surface，取决于 `shouldStartTaobao / shouldStartDouyin`。这两个字段必须是 `@State`，因为 `liveSurfaceLayer()` 和 `inactiveLiveSlotLayer()` 都通过 `isPlatformLiveActive()` 读取它们决定渲染直播层还是空态。如果它们只是普通字段，播放器仍可能已经 open 并进入 playing，但 ArkUI 不会因为普通字段变化重绘，直到折叠/展开触发 `rootWidth` 变化后才显示直播画面。
+
 ## 4. 串流鉴权和 open 流程
 
 每一路直播都独立走同样流程：

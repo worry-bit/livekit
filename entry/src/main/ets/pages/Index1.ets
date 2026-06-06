@@ -92,8 +92,6 @@ struct Index1 {
   private douyinXCtrl: XComponentController = new XComponentController()
   private taobaoSurfaceId: string = ''
   private douyinSurfaceId: string = ''
-  private shouldStartTaobao: boolean = false
-  private shouldStartDouyin: boolean = false
   private taobaoStarted: boolean = false
   private douyinStarted: boolean = false
   private taobaoRetryTimer: number = -1
@@ -108,6 +106,8 @@ struct Index1 {
   @State selectedTaobao: boolean = false
   @State selectedDouyin: boolean = false
   @State isLiveStarted: boolean = false
+  @State shouldStartTaobao: boolean = false
+  @State shouldStartDouyin: boolean = false
   @State taobaoReady: boolean = false
   @State douyinReady: boolean = false
   @State taobaoPlaying: boolean = false
@@ -692,9 +692,11 @@ struct Index1 {
   private setShouldStartPlatform(platform: LivePlatform, shouldStart: boolean): void {
     if (platform === LivePlatform.TAOBAO) {
       this.shouldStartTaobao = shouldStart
+      console.info(`[Index1] Taobao shouldStart -> ${shouldStart}`)
       return
     }
     this.shouldStartDouyin = shouldStart
+    console.info(`[Index1] Douyin shouldStart -> ${shouldStart}`)
   }
 
   private getPlatformInstanceId(platform: LivePlatform): string {
