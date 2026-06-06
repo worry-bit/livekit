@@ -60,6 +60,14 @@ export function shouldRenderKooFoldedSwitch(
 }
 
 /**
+ * 生成直播 XComponent 的稳定业务 id。surfaceRevision 递增时强制 ArkUI
+ * 创建新的 native surface，避免停止后补开复用旧外屏 surface。
+ */
+export function buildKooLiveSurfaceComponentId(platformKey: string, surfaceRevision: number): string {
+  return `${platformKey}-surface-${surfaceRevision}`
+}
+
+/**
  * 补开面板的选项禁用规则：只锁定仍在直播的实例。
  * 曾经选择过但已经停止的直播应恢复可选，允许用户重新补开。
  */

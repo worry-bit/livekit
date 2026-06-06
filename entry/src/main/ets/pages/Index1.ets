@@ -10,6 +10,7 @@ import {
   KooAuthTokenResult,
   KooInstancePoolEntry,
   LivePlatformConfig,
+  buildKooLiveSurfaceComponentId,
   canStartKooLiveAddSelection,
   getKooLiveAddOptionTitle,
   isKooLiveAddOptionDisabled,
@@ -119,6 +120,8 @@ struct Index1 {
   @State douyinStateText: string = 'NEW'
   @State taobaoErrorText: string = ''
   @State douyinErrorText: string = ''
+  @State taobaoSurfaceRevision: number = 0
+  @State douyinSurfaceRevision: number = 0
   @State foldedVisiblePlatform: LivePlatform = LivePlatform.TAOBAO
   @State pendingAddTaobao: boolean = false
   @State pendingAddDouyin: boolean = false
@@ -359,6 +362,39 @@ struct Index1 {
 
   private getPlatformSurfaceId(platform: LivePlatform): string {
     return platform === LivePlatform.TAOBAO ? this.taobaoSurfaceId : this.douyinSurfaceId
+  }
+
+  private getPlatformSurfaceRevision(platform: LivePlatform): number {
+    return platform === LivePlatform.TAOBAO ? this.taobaoSurfaceRevision : this.douyinSurfaceRevision
+  }
+
+  private bumpPlatformSurfaceRevision(platform: LivePlatform): void {
+    if (platform === LivePlatform.TAOBAO) {
+      this.taobaoSurfaceRevision++
+      return
+    }
+    this.douyinSurfaceRevision++
+  }
+
+  /**
+   * 停止或补开前强制丢弃旧 surface 和 controller。
+   * 外屏停止后再展开内屏补开时，旧 controller 可能还指向外屏 surface；
+   * 这里递增 XComponent id 并换 controller，确保下一次 open 绑定当前槽位。
+   */
+  private invalidatePlatformSurface(platform: LivePlatform): void {
+    this.setPlatformReady(platform, false)
+    this.setPlatformSurfaceId(platform, '')
+    this.getPlatformPlayer(platform).setSurfaceId('')
+    if (platform === LivePlatform.TAOBAO) {
+      this.taobaoXCtrl = new XComponentController()
+    } else {
+      this.douyinXCtrl = new XComponentController()
+    }
+    this.bumpPlatformSurfaceRevision(platform)
+  }
+
+  private getPlatformXComponentId(platform: LivePlatform): string {
+    return buildKooLiveSurfaceComponentId(platform, this.getPlatformSurfaceRevision(platform))
   }
 
   private setPlatformSurfaceId(platform: LivePlatform, surfaceId: string): void {
@@ -808,6 +844,7 @@ struct Index1 {
       this.douyinPlaying = false
       this.douyinPlayer.close()
     }
+    this.invalidatePlatformSurface(platform)
 
     if (wasFoldedScreen && wasBothPlatformsLiveActive) {
       this.foldedVisiblePlatform = platform
@@ -1270,6 +1307,7 @@ struct Index1 {
   @Builder
   taobaoSurface() {
     XComponent({
+      id: this.getPlatformXComponentId(LivePlatform.TAOBAO),
       type: XComponentType.SURFACE,
       controller: this.taobaoXCtrl
     })
@@ -1302,6 +1340,7 @@ struct Index1 {
   @Builder
   douyinSurface() {
     XComponent({
+      id: this.getPlatformXComponentId(LivePlatform.DOUYIN),
       type: XComponentType.SURFACE,
       controller: this.douyinXCtrl
     })

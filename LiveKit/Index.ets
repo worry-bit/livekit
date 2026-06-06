@@ -65,6 +65,7 @@ export type {
   KooInstanceSelectionInput
 } from './src/main/ets/koophone/KooInstancePool'
 export {
+  buildKooLiveSurfaceComponentId,
   canStartKooLiveAddSelection,
   getKooLiveAddOptionTitle,
   isKooLiveAddOptionDisabled,

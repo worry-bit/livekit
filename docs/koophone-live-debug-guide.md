@@ -107,6 +107,8 @@ platformOption(platform, title)
 
 `syncPlatformSurfaceAndStart(platform)` 会主动从当前平台的 `XComponentController` 读取最新 `surfaceId` 并调用 `KooPhonePlayer.setSurfaceId()`。如果 ArkUI 此刻还没把新 `XComponent` 挂上，`schedulePlatformSurfaceSync(platform)` 会在短延迟后再同步一次，最终仍由 `XComponent.onLoad()` 兜底触发启动。这是为了解决停止某一路后马上补开时，内屏槽位还停留在“暂无直播内容”、画面等到折叠/展开后才出现的竞态。
 
+外屏停止当前直播后再展开内屏补开时，还会走 `invalidatePlatformSurface(platform)`。该方法会清空旧 `surfaceId`、替换该平台的 `XComponentController`，并递增 `taobaoSurfaceRevision / douyinSurfaceRevision`。`taobaoSurface()` 和 `douyinSurface()` 会把 revision 拼进 `XComponent({ id })`，强制 ArkUI 为补开的直播创建当前内屏槽位的新 native surface，避免播放器继续绑定外屏旧 surface。
+
 ## 4. 串流鉴权和 open 流程
 
 每一路直播都独立走同样流程：
@@ -176,7 +178,7 @@ KooPhone 实例鉴权响应字段映射：
 - 展开屏：`liveContent()` 使用固定左右槽位，左侧固定淘宝，右侧固定抖音。
 - 单路直播且展开内屏时，未直播半屏显示和初始页一致的补开选择页；只有正在直播的平台置灰不可点，并显示“（正在直播中）”，已停止的平台会恢复可选。
 - 外屏单路直播时不显示补开选择页；必须展开 Mate X7 内屏后，才能在未直播半屏选择第二路。
-- 直播中的 `XComponent` 由 `liveSurfaceLayer(platform)` 常驻渲染。内屏/外屏切换只调整同一层的位置、宽度、透明度和层级，避免折叠时销毁并重建 surface。
+- 直播中的 `XComponent` 由 `liveSurfaceLayer(platform)` 常驻渲染。内屏/外屏切换只调整同一层的位置、宽度、透明度和层级，避免折叠时销毁并重建 surface；用户停止某一路并重新补开时，会递增该路 surface revision，强制丢弃旧外屏 surface。
 - 从内屏折叠到外屏时，`prepareFoldedVisiblePlatformOnFold()` 会同步外屏默认可见直播：双路时固定显示内屏左侧淘宝；只有右侧抖音在播时直接显示抖音。
 - 外屏双路直播时，两路 `XComponent` surface 都保持挂载；当前版本通过 `ENABLE_FOLDED_LIVE_SWITCH = false` 隐藏“切换直播”按钮，`foldedSwitchButton()`、`toggleFoldedVisiblePlatform()` 和策略测试仍保留，后续打开开关即可恢复。
 - 外屏双路直播点击当前直播的“停止直播”后，不自动跳到另一直播，而是在当前槽位显示和初始页一致的补开选择页；被停止的平台可选，另一正在直播的平台置灰并显示“（正在直播中）”。

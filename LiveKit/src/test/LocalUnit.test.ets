@@ -2,6 +2,7 @@ import { describe, beforeAll, beforeEach, afterEach, afterAll, it, expect } from
 import { parseKooInstanceAuthResponse } from '../main/ets/koophone/KooAuthParser';
 import { KooInstancePoolEntry, selectNextAvailableKooInstance } from '../main/ets/koophone/KooInstancePool';
 import {
+  buildKooLiveSurfaceComponentId,
   canStartKooLiveAddSelection,
   getKooLiveAddOptionTitle,
   isKooLiveAddOptionDisabled,
@@ -272,6 +273,15 @@ export default function localUnitTest() {
       expect(hidden).assertEqual(false);
       expect(visibleWhenEnabled).assertEqual(true);
       expect(stillHiddenOnExpandedScreen).assertEqual(false);
+    });
+
+    it('changesSurfaceComponentIdWhenRevisionIncrements', 0, () => {
+      const first = buildKooLiveSurfaceComponentId('taobao', 1);
+      const second = buildKooLiveSurfaceComponentId('taobao', 2);
+
+      expect(first).assertEqual('taobao-surface-1');
+      expect(second).assertEqual('taobao-surface-2');
+      expect(first === second).assertEqual(false);
     });
   });
 }
