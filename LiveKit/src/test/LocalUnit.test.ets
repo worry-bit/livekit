@@ -12,6 +12,7 @@ import {
   shouldShowKooLiveAddPanel
 } from '../main/ets/koophone/KooLiveSlotPolicy';
 import {
+  buildLiveKitPreviewComponentId,
   canToggleLiveKitPush,
   getLiveKitPushButtonColor,
   getLiveKitPushButtonText,
@@ -317,6 +318,15 @@ export default function localUnitTest() {
       expect(canToggleLiveKitPush(false, false)).assertEqual(false);
       expect(canToggleLiveKitPush(true, true)).assertEqual(false);
       expect(canToggleLiveKitPush(true, false)).assertEqual(true);
+    });
+
+    it('changesPreviewComponentIdWhenRevisionIncrements', 0, () => {
+      const first = buildLiveKitPreviewComponentId('livekit-preview', 0);
+      const second = buildLiveKitPreviewComponentId('livekit-preview', 1);
+
+      expect(first).assertEqual('livekit-preview-0');
+      expect(second).assertEqual('livekit-preview-1');
+      expect(first === second).assertEqual(false);
     });
 
     it('stopsPushWhenNoKooPhoneLiveIsActive', 0, () => {

@@ -76,6 +76,7 @@ export {
 } from './src/main/ets/koophone/KooLiveSlotPolicy'
 export type { KooLiveAddSlotState } from './src/main/ets/koophone/KooLiveSlotPolicy'
 export {
+  buildLiveKitPreviewComponentId,
   canToggleLiveKitPush,
   getLiveKitPushButtonColor,
   getLiveKitPushButtonText,

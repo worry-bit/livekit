@@ -12,6 +12,7 @@ import {
   KooInstancePoolEntry,
   canToggleLiveKitPush,
   LivePlatformConfig,
+  buildLiveKitPreviewComponentId,
   buildKooLiveSurfaceComponentId,
   canStartKooLiveAddSelection,
   getLiveKitPushButtonColor,
@@ -142,6 +143,7 @@ struct Index1 {
   @State liveKitPushing: boolean = false
   @State liveKitBusy: boolean = false
   @State liveKitErrorText: string = ''
+  @State liveKitPreviewRevision: number = 0
 
   aboutToAppear(): void {
     this.taobaoPlayer.onStateChange = (s: KooPhoneState) => {
@@ -400,6 +402,7 @@ struct Index1 {
         this.liveKitErrorText = liveKitUtil.errorMessage
         await liveKitUtil.unpublishVideo()
         await liveKitUtil.leaveRoom()
+        this.resetLiveKitPreviewSurface()
         return
       }
 
@@ -408,6 +411,7 @@ struct Index1 {
       this.liveKitErrorText = String(error)
       await liveKitUtil.unpublishVideo()
       await liveKitUtil.leaveRoom()
+      this.resetLiveKitPreviewSurface()
       this.liveKitPushing = false
     } finally {
       this.liveKitBusy = false
@@ -435,7 +439,19 @@ struct Index1 {
     } finally {
       this.liveKitPushing = false
       this.liveKitBusy = false
+      this.resetLiveKitPreviewSurface()
     }
+  }
+
+  /**
+   * 关闭本机推流后强制重建预览 XComponent。
+   * Native surface 不重建时会停留摄像头最后一帧，导致用户以为摄像头仍在运行。
+   */
+  private resetLiveKitPreviewSurface(): void {
+    this.liveKitPreviewReady = false
+    this.liveKitSurfaceId = ''
+    this.liveKitXCtrl = new XComponentController()
+    this.liveKitPreviewRevision++
   }
 
   /**
@@ -1556,7 +1572,7 @@ struct Index1 {
   liveKitPreviewSurface() {
     Stack({ alignContent: Alignment.Center }) {
       XComponent({
-        id: LIVEKIT_PREVIEW_COMPONENT_ID,
+        id: buildLiveKitPreviewComponentId(LIVEKIT_PREVIEW_COMPONENT_ID, this.liveKitPreviewRevision),
         type: XComponentType.SURFACE,
         controller: this.liveKitXCtrl
       })

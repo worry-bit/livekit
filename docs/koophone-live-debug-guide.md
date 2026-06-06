@@ -143,7 +143,13 @@ liveKitPushButton()
   -> stopLiveKitPush()
   -> liveKitUtil.unpublishVideo()
   -> liveKitUtil.leaveRoom()
+  -> LiveKitUtil.recreateClientForNextPush()
+  -> Index1.resetLiveKitPreviewSurface()
+  -> liveKitPreviewRevision++
+  -> liveKitPreviewSurface() 创建新的 XComponent native surface
 ```
+
+关闭推流后不能只把 `liveKitPushing` 改回 `false`。本机摄像头预览是 native surface，如果不销毁旧 XComponent，surface 会保留摄像头最后一帧；同时旧 `LiveKitClient` 可能还带着已经关闭的 peerConnection、renderer 或信令监听状态，下一次点击开始推流会被旧状态卡住。因此关闭成功或启动失败回滚时，页面会调用 `resetLiveKitPreviewSurface()`，清空 `liveKitSurfaceId`、替换 `liveKitXCtrl`、递增 `liveKitPreviewRevision`；`LiveKitUtil.leaveRoom()` 也会重新创建 `LiveKitClient`，保证下一次点击重新走权限、建连和发布。
 
 切换摄像头链路：
 

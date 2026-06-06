@@ -19,7 +19,7 @@ class LiveKitUtil {
   private context: common.UIAbilityContext = getContext(this) as common.UIAbilityContext
 
   constructor() {
-    this.setupEventHandlers()
+    this.setupEventHandlers(this.client)
   }
 
   /**
@@ -77,17 +77,18 @@ class LiveKitUtil {
    * 离开 LiveKit 房间并清理本地状态。关闭推流时先调用 unpublishVideo，再调用本方法。
    */
   async leaveRoom(): Promise<boolean> {
+    let success = true
     try {
       await this.client.disconnect()
-      this.roomState = 'disconnected'
-      this.isVideoPublished = false
-      this.localVideoSurfaceId = ''
-      return true
     } catch (error) {
+      success = false
       this.errorMessage = String(error)
       console.error('[LiveKitUtil] leaveRoom failed:', error)
-      return false
+    } finally {
+      this.resetRuntimeState()
+      this.recreateClientForNextPush()
     }
+    return success
   }
 
   /**
@@ -135,6 +136,7 @@ class LiveKitUtil {
    */
   async unpublishVideo(): Promise<boolean> {
     if (!this.isVideoPublished && !this.client.videoPublished) {
+      this.localVideoSurfaceId = ''
       return true
     }
 
@@ -207,14 +209,36 @@ class LiveKitUtil {
   }
 
   /**
+   * 重置页面可读状态。关闭推流后必须回到完整初始态，
+   * 下一次点击开始推流才会重新走 joinRoom 和 publishVideo。
+   */
+  private resetRuntimeState(): void {
+    this.roomState = 'disconnected'
+    this.remoteSpeakers = []
+    this.participantCount = 0
+    this.isVideoPublished = false
+    this.localVideoSurfaceId = ''
+  }
+
+  /**
+   * 关闭房间后重新创建 LiveKitClient。旧 client 内部可能仍保留 peerConnection、
+   * renderer 或信令监听状态，换新实例可以避免下一次开始推流被旧状态卡住。
+   */
+  private recreateClientForNextPush(): void {
+    this.client.stopAudioLevelObserver()
+    this.client = createLiveKitClient()
+    this.setupEventHandlers(this.client)
+  }
+
+  /**
    * 设置 LiveKit SDK 事件处理器，把底层连接状态同步给页面可读字段。
    */
-  private setupEventHandlers(): void {
-    this.client.on('connected', () => {
+  private setupEventHandlers(client: LiveKitClient): void {
+    client.on('connected', () => {
       this.roomState = 'connected'
       console.info('[LiveKitUtil] 已连接到房间')
 
-      this.client.startAudioLevelObserver((levels: AudioLevelInfo[]) => {
+      client.startAudioLevelObserver((levels: AudioLevelInfo[]) => {
         for (let i = 0; i < levels.length; i++) {
           const info = levels[i]
           if (info.isLocal) {
@@ -234,36 +258,37 @@ class LiveKitUtil {
       }, { intervalMs: 500, speakingThreshold: 0.05 })
     })
 
-    this.client.on('disconnected', (data: ESObject) => {
+    client.on('disconnected', (data: ESObject) => {
       this.roomState = 'disconnected'
       this.isVideoPublished = false
-      this.client.stopAudioLevelObserver()
+      this.localVideoSurfaceId = ''
+      client.stopAudioLevelObserver()
       if (data.error) {
         this.errorMessage = String(data.error.message)
       }
       console.info('[LiveKitUtil] 已断开连接')
     })
 
-    this.client.on('reconnecting', () => {
+    client.on('reconnecting', () => {
       this.roomState = 'reconnecting'
       console.info('[LiveKitUtil] 正在重连...')
     })
 
-    this.client.on('participantConnected', (data: RtcModel) => {
+    client.on('participantConnected', (data: RtcModel) => {
       console.info('[LiveKitUtil] 参与者加入:', data.participant.identity)
       this.participantCount++
     })
 
-    this.client.on('participantDisconnected', (data: RtcModel) => {
+    client.on('participantDisconnected', (data: RtcModel) => {
       console.info('[LiveKitUtil] 参与者离开:', data.participant.identity)
       this.participantCount--
     })
 
-    this.client.on('trackSubscribed', () => {
+    client.on('trackSubscribed', () => {
       console.info('[LiveKitUtil] 收到远程音频轨道')
     })
 
-    this.client.on('activeSpeakersChanged', (data: SpeakerModel) => {
+    client.on('activeSpeakersChanged', (data: SpeakerModel) => {
       this.remoteSpeakers = data.speakers.map(s => s.sid)
     })
   }

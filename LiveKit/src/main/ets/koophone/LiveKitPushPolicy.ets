@@ -45,6 +45,14 @@ export function canToggleLiveKitPush(isSurfaceReady: boolean, isBusy: boolean): 
 }
 
 /**
+ * 本机摄像头预览 XComponent 的稳定业务 id。关闭推流后递增 revision，
+ * 让 ArkUI 销毁旧 native surface，避免预览区停留最后一帧。
+ */
+export function buildLiveKitPreviewComponentId(baseId: string, revision: number): string {
+  return `${baseId}-${revision}`
+}
+
+/**
  * 所有云机直播都停止、失败或页面退出时，需要释放本机摄像头推流。
  */
 export function shouldStopLiveKitPush(hasTaobaoLiveActive: boolean, hasDouyinLiveActive: boolean): boolean {
