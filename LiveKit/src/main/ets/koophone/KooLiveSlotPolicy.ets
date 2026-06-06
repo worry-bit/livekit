@@ -46,6 +46,20 @@ export function shouldShowKooFoldedSwitch(
 }
 
 /**
+ * 外屏切换按钮的最终渲染开关。保留原有双路外屏切换策略，
+ * 但允许页面层通过功能开关临时隐藏入口，后续恢复时只需要打开开关。
+ */
+export function shouldRenderKooFoldedSwitch(
+  isSwitchFeatureEnabled: boolean,
+  isExpandedScreen: boolean,
+  isLeftLiveActive: boolean,
+  isRightLiveActive: boolean
+): boolean {
+  return isSwitchFeatureEnabled &&
+    shouldShowKooFoldedSwitch(isExpandedScreen, isLeftLiveActive, isRightLiveActive)
+}
+
+/**
  * 补开面板的选项禁用规则：只锁定仍在直播的实例。
  * 曾经选择过但已经停止的直播应恢复可选，允许用户重新补开。
  */

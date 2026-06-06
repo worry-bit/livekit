@@ -6,6 +6,7 @@ import {
   getKooLiveAddOptionTitle,
   isKooLiveAddOptionDisabled,
   resolveKooFoldedVisibleSlot,
+  shouldRenderKooFoldedSwitch,
   shouldShowKooFoldedSwitch,
   shouldShowKooLiveAddPanel
 } from '../main/ets/koophone/KooLiveSlotPolicy';
@@ -214,6 +215,19 @@ export default function localUnitTest() {
       expect(visible).assertEqual(false);
     });
 
+    it('restartedSlotLeavesAddPanelAndReturnsToSurfaceState', 0, () => {
+      const addPanelVisibleAfterRestart = shouldShowKooLiveAddPanel({
+        isExpandedScreen: true,
+        isFoldedVisibleStoppedSlot: false,
+        isSlotLiveActive: true,
+        isSlotFailed: false,
+        hasAnyLiveActive: true,
+        isPendingAdd: false
+      });
+
+      expect(addPanelVisibleAfterRestart).assertEqual(false);
+    });
+
     it('enablesStoppedPlatformEvenIfItWasSelectedBefore', 0, () => {
       const disabled = isKooLiveAddOptionDisabled(false);
 
@@ -248,6 +262,16 @@ export default function localUnitTest() {
       expect(foldedDual).assertEqual(true);
       expect(expandedDual).assertEqual(false);
       expect(foldedSingle).assertEqual(false);
+    });
+
+    it('hidesFoldedSwitchWhenFeatureFlagIsDisabled', 0, () => {
+      const hidden = shouldRenderKooFoldedSwitch(false, false, true, true);
+      const visibleWhenEnabled = shouldRenderKooFoldedSwitch(true, false, true, true);
+      const stillHiddenOnExpandedScreen = shouldRenderKooFoldedSwitch(true, true, true, true);
+
+      expect(hidden).assertEqual(false);
+      expect(visibleWhenEnabled).assertEqual(true);
+      expect(stillHiddenOnExpandedScreen).assertEqual(false);
     });
   });
 }

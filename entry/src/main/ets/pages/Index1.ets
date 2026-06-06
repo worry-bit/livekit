@@ -15,7 +15,7 @@ import {
   isKooLiveAddOptionDisabled,
   resolveKooFoldedVisibleSlot,
   selectNextAvailableKooInstance,
-  shouldShowKooFoldedSwitch,
+  shouldRenderKooFoldedSwitch,
   shouldShowKooLiveAddPanel,
   TouchAction,
   TouchPoint
@@ -79,6 +79,7 @@ const DISABLED_BUTTON = '#D7DBE3'
 const LIVE_RED = '#E53935'
 const OVERLAY_BACKGROUND = '#4D000000'
 const FOLDED_SWITCH_GREEN = '#2EAD5B'
+const ENABLE_FOLDED_LIVE_SWITCH = false
 
 @Entry
 @Component
@@ -360,6 +361,71 @@ struct Index1 {
     return platform === LivePlatform.TAOBAO ? this.taobaoSurfaceId : this.douyinSurfaceId
   }
 
+  private setPlatformSurfaceId(platform: LivePlatform, surfaceId: string): void {
+    if (platform === LivePlatform.TAOBAO) {
+      this.taobaoSurfaceId = surfaceId
+      return
+    }
+    this.douyinSurfaceId = surfaceId
+  }
+
+  private setPlatformReady(platform: LivePlatform, ready: boolean): void {
+    if (platform === LivePlatform.TAOBAO) {
+      this.taobaoReady = ready
+      return
+    }
+    this.douyinReady = ready
+  }
+
+  /**
+   * 读取当前平台 XComponentController 里最新的 surfaceId。
+   * 补开直播时 ArkUI 可能已经保留了旧 surface，也可能刚开始挂载新 surface；
+   * 这里统一刷新页面记录并重绑播放器，避免 open 使用已经失效的 surface。
+   */
+  private refreshPlatformSurfaceId(platform: LivePlatform): void {
+    let surfaceId = ''
+    try {
+      surfaceId = platform === LivePlatform.TAOBAO ?
+        this.taobaoXCtrl.getXComponentSurfaceId() :
+        this.douyinXCtrl.getXComponentSurfaceId()
+    } catch (e) {
+      console.warn(`[Index1] ${this.getPlatformTitle(platform)} surface refresh skipped: ${String(e)}`)
+    }
+
+    if (surfaceId.length === 0) {
+      return
+    }
+
+    this.setPlatformSurfaceId(platform, surfaceId)
+    this.setPlatformReady(platform, true)
+    this.getPlatformPlayer(platform).setSurfaceId(surfaceId)
+  }
+
+  /**
+   * 补开或重开某一路直播时主动同步当前 surface 并尝试启动。
+   * 如果此刻新 XComponent 还没完成 onLoad，后续 onLoad 仍会再次调用 startPlatformIfReady。
+   */
+  private syncPlatformSurfaceAndStart(platform: LivePlatform): void {
+    this.refreshPlatformSurfaceId(platform)
+    if (this.getPlatformSurfaceId(platform).length > 0) {
+      this.getPlatformPlayer(platform).setSurfaceId(this.getPlatformSurfaceId(platform))
+    }
+    this.startPlatformIfReady(platform)
+  }
+
+  /**
+   * ArkUI 状态切换后 XComponent 挂载可能晚于按钮回调一帧。
+   * 安排一次短延迟同步，覆盖停止后马上补开的 surface 重建竞态。
+   */
+  private schedulePlatformSurfaceSync(platform: LivePlatform): void {
+    const timer = setTimeout(() => {
+      this.syncPlatformSurfaceAndStart(platform)
+    }, 60) as number
+    if (timer < 0) {
+      console.warn(`[Index1] ${this.getPlatformTitle(platform)} surface sync timer unavailable`)
+    }
+  }
+
   /**
    * 生成本次开流使用的平台配置。IAM 配置仍复用静态占位，KooPhone auth URL
    * 按当前实例动态生成，所以实例池切换后会重新鉴权到新的 kp_id。
@@ -581,9 +647,10 @@ struct Index1 {
     this.setPlatformSelected(platform, true)
     this.setShouldStartPlatform(platform, true)
     this.assignInitialInstanceForPlatform(platform)
-    this.setPlatformPendingAdd(platform, false)
+    this.clearPendingAddSelection()
     this.isLiveStarted = true
-    this.startPlatformIfReady(platform)
+    this.syncPlatformSurfaceAndStart(platform)
+    this.schedulePlatformSurfaceSync(platform)
   }
 
   private setShouldStartPlatform(platform: LivePlatform, shouldStart: boolean): void {
@@ -766,7 +833,8 @@ struct Index1 {
   }
 
   private shouldShowFoldedSwitch(): boolean {
-    return shouldShowKooFoldedSwitch(
+    return shouldRenderKooFoldedSwitch(
+      ENABLE_FOLDED_LIVE_SWITCH,
       this.isExpandedScreen(),
       this.isPlatformLiveActive(LivePlatform.TAOBAO),
       this.isPlatformLiveActive(LivePlatform.DOUYIN)
@@ -1209,16 +1277,16 @@ struct Index1 {
       .height('100%')
       .backgroundColor(Color.Black)
       .onLoad(() => {
-        this.taobaoSurfaceId = this.taobaoXCtrl.getXComponentSurfaceId()
-        this.taobaoReady = true
-        this.taobaoPlayer.setSurfaceId(this.taobaoSurfaceId)
+        this.refreshPlatformSurfaceId(LivePlatform.TAOBAO)
         this.startPlatformIfReady(LivePlatform.TAOBAO)
         console.info('[Index1] Taobao XComponent loaded, surfaceId:', this.taobaoSurfaceId)
       })
       .onDestroy(() => {
-        this.taobaoReady = false
-        this.taobaoSurfaceId = ''
-        this.taobaoPlayer.setSurfaceId('')
+        if (!this.shouldStartPlatform(LivePlatform.TAOBAO)) {
+          this.setPlatformReady(LivePlatform.TAOBAO, false)
+          this.setPlatformSurfaceId(LivePlatform.TAOBAO, '')
+          this.taobaoPlayer.setSurfaceId('')
+        }
       })
       .onAreaChange((_old: Area, newArea: Area) => {
         this.taobaoPlayer.inputController.setViewSize(newArea.width as number, newArea.height as number)
@@ -1241,16 +1309,16 @@ struct Index1 {
     .height('100%')
     .backgroundColor(Color.Black)
     .onLoad(() => {
-      this.douyinSurfaceId = this.douyinXCtrl.getXComponentSurfaceId()
-      this.douyinReady = true
-      this.douyinPlayer.setSurfaceId(this.douyinSurfaceId)
+      this.refreshPlatformSurfaceId(LivePlatform.DOUYIN)
       this.startPlatformIfReady(LivePlatform.DOUYIN)
       console.info('[Index1] Douyin XComponent loaded, surfaceId:', this.douyinSurfaceId)
     })
     .onDestroy(() => {
-      this.douyinReady = false
-      this.douyinSurfaceId = ''
-      this.douyinPlayer.setSurfaceId('')
+      if (!this.shouldStartPlatform(LivePlatform.DOUYIN)) {
+        this.setPlatformReady(LivePlatform.DOUYIN, false)
+        this.setPlatformSurfaceId(LivePlatform.DOUYIN, '')
+        this.douyinPlayer.setSurfaceId('')
+      }
     })
     .onAreaChange((_old: Area, newArea: Area) => {
       this.douyinPlayer.inputController.setViewSize(newArea.width as number, newArea.height as number)
