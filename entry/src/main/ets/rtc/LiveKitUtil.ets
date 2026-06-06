@@ -1,43 +1,51 @@
-// import { createLiveKitClient, LiveKitClient } from "../../livekit/LiveKitClient"
-import { AudioLevelInfo, VideoCaptureOptions, createLiveKitClient, LiveKitClient } from "livekit-harmony"
-import { abilityAccessCtrl, common } from "@kit.AbilityKit"
-import { AppStorageV2 } from "@kit.ArkUI"
-import { RtcModel, SpeakerModel } from "./RtcModel"
+import { AudioLevelInfo, createLiveKitClient, LiveKitClient } from 'livekit-harmony'
+import { abilityAccessCtrl, common } from '@kit.AbilityKit'
+import { RtcModel, SpeakerModel } from './RtcModel'
 
-
+/**
+ * 本机 LiveKit 推流适配层。
+ * 页面通过这里完成“权限 -> SFU 建连 -> 发布摄像头 -> 取消发布 -> 离开房间”的顺序调用。
+ */
 class LiveKitUtil {
-  // 状态
   roomState: string = 'disconnected'
   remoteSpeakers: string[] = []
   errorMessage: string = ''
   participantCount: number = 0
   isVideoPublished: boolean = false
+  hasMediaPermission: boolean = false
   localVideoSurfaceId: string = ''
-  // LiveKit 客户端
+
   private client: LiveKitClient = createLiveKitClient()
-  // 上下文
   private context: common.UIAbilityContext = getContext(this) as common.UIAbilityContext
 
   constructor() {
-    // this.requestPermissions()
     this.setupEventHandlers()
   }
 
   /**
-   *
-   * @param url  实际应用中应该从配置或 API 获取
-   * @param token 实际应用中应该从配置或 API 获取
-   * @returns
+   * 连接到 LiveKit SFU 房间。url/token 仍由页面配置传入，仓库中只保留占位符。
+   * @returns true 表示信令和 RTC 初始化已完成，可以继续 publishVideo。
    */
-  async joinRoom(url: string, token: string): Promise<void> {
-    // 防止重复调用
-    if (this.roomState !== 'disconnected') {
-      console.warn('[VoiceCallPage] Already connecting or connected, skip')
-      return
+  async joinRoom(url: string, token: string): Promise<boolean> {
+    if (!this.isValidSfuParam(url) || !this.isValidSfuParam(token)) {
+      this.errorMessage = 'LiveKit SFU url/token 仍是占位符，请先替换为真实参数'
+      console.warn('[LiveKitUtil] Invalid SFU params')
+      return false
     }
+
+    if (this.roomState === 'connected' && this.client.isConnected) {
+      return true
+    }
+
+    if (this.roomState !== 'disconnected') {
+      this.errorMessage = 'LiveKit 正在连接或重连中，请稍后再试'
+      console.warn('[LiveKitUtil] Already connecting or connected, skip')
+      return false
+    }
+
     this.roomState = 'connecting'
+    this.errorMessage = ''
     try {
-      this.errorMessage = ''
       await this.client.connect(url, token, {
         publishAudio: true,
         audioOptions: {
@@ -49,108 +57,177 @@ class LiveKitUtil {
         }
       })
 
+      if (!this.client.isConnected) {
+        this.roomState = 'disconnected'
+        this.errorMessage = this.errorMessage.length > 0 ? this.errorMessage : '连接 LiveKit SFU 房间失败'
+        return false
+      }
+
+      this.roomState = 'connected'
+      return true
     } catch (error) {
-      console.debug('加入房间失败:', error)
       this.roomState = 'disconnected'
-      this.errorMessage = (error as Error).message
+      this.errorMessage = String(error)
+      console.error('[LiveKitUtil] joinRoom failed:', error)
+      return false
     }
-
   }
 
   /**
-   * 离开房间
+   * 离开 LiveKit 房间并清理本地状态。关闭推流时先调用 unpublishVideo，再调用本方法。
    */
-  async leaveRoom(): Promise<void> {
-    await this.client.disconnect()
+  async leaveRoom(): Promise<boolean> {
+    try {
+      await this.client.disconnect()
+      this.roomState = 'disconnected'
+      this.isVideoPublished = false
+      this.localVideoSurfaceId = ''
+      return true
+    } catch (error) {
+      this.errorMessage = String(error)
+      console.error('[LiveKitUtil] leaveRoom failed:', error)
+      return false
+    }
   }
 
   /**
-   * 切换静音
+   * 切换麦克风静音状态，保留给旧示例页和后续语音控制使用。
    */
   toggleMute(isMuted: boolean): void {
     this.client.setMuted(isMuted)
   }
 
   /**
-   * 发布本地摄像头视频
-   * @param surfaceId 来自 XComponent.onLoad，必须非空
+   * 发布本机摄像头视频。surfaceId 必须来自本机预览 XComponent，不能复用云机串流 surface。
+   * @returns true 表示视频轨道已发布到 SFU。
    */
-  async publishVideo(surfaceId: string): Promise<void> {
-    if (!surfaceId) {
+  async publishVideo(surfaceId: string): Promise<boolean> {
+    if (surfaceId.length === 0) {
+      this.errorMessage = '本机摄像头预览 surface 未准备好'
       console.warn('[LiveKitUtil] publishVideo called with empty surfaceId')
-      return
+      return false
     }
+
+    if (!this.client.isConnected) {
+      this.errorMessage = 'LiveKit 房间未连接，无法发布视频'
+      console.warn('[LiveKitUtil] publishVideo called before room connected')
+      return false
+    }
+
     this.localVideoSurfaceId = surfaceId
     try {
       await this.client.publishVideo(surfaceId)
-      this.isVideoPublished = true
+      this.isVideoPublished = this.client.videoPublished
+      if (!this.isVideoPublished) {
+        this.errorMessage = 'LiveKit 视频发布失败'
+      }
+      return this.isVideoPublished
     } catch (error) {
+      this.isVideoPublished = false
+      this.errorMessage = String(error)
       console.error('[LiveKitUtil] publishVideo failed:', error)
+      return false
     }
   }
 
   /**
-   * 取消发布视频
+   * 取消发布本机摄像头视频，并释放 SDK 内部的视频轨道和本地渲染器。
    */
-  async unpublishVideo(): Promise<void> {
+  async unpublishVideo(): Promise<boolean> {
+    if (!this.isVideoPublished && !this.client.videoPublished) {
+      return true
+    }
+
     try {
       await this.client.unpublishVideo()
-      this.isVideoPublished = false
+      this.isVideoPublished = this.client.videoPublished
+      if (this.isVideoPublished) {
+        this.errorMessage = 'LiveKit 视频取消发布失败'
+        return false
+      }
+      this.localVideoSurfaceId = ''
+      return true
     } catch (error) {
+      this.errorMessage = String(error)
       console.error('[LiveKitUtil] unpublishVideo failed:', error)
+      return false
     }
   }
 
   /**
-   * 切换前/后摄像头
+   * 切换前/后摄像头。只有视频已经发布后才允许切换，避免无轨道时调用底层 SDK。
    */
-  async switchCamera(): Promise<void> {
-    await this.client.switchCamera()
+  async switchCamera(): Promise<boolean> {
+    if (!this.isVideoPublished && !this.client.videoPublished) {
+      this.errorMessage = '请先开始直播推流，再切换摄像头'
+      return false
+    }
+
+    try {
+      await this.client.switchCamera()
+      return true
+    } catch (error) {
+      this.errorMessage = String(error)
+      console.error('[LiveKitUtil] switchCamera failed:', error)
+      return false
+    }
   }
 
   /**
-   * 请求麦克风权限
+   * 请求本机麦克风和摄像头权限。系统弹窗由 requestPermissionsFromUser 触发。
+   * @returns true 表示两个权限都已授权。
    */
-   async requestPermissions(): Promise<void> {
+  async requestPermissions(): Promise<boolean> {
     const atManager = abilityAccessCtrl.createAtManager()
     try {
       const result = await atManager.requestPermissionsFromUser(
         this.context,
         ['ohos.permission.MICROPHONE', 'ohos.permission.CAMERA']
       )
-      if (result.authResults[0] !== 0 || result.authResults[1] !== 0) {
-        this.errorMessage = '需要麦克风和摄像头权限才能进行视频通话'
+      const micGranted = result.authResults.length > 0 && result.authResults[0] === 0
+      const cameraGranted = result.authResults.length > 1 && result.authResults[1] === 0
+      this.hasMediaPermission = micGranted && cameraGranted
+      if (!this.hasMediaPermission) {
+        this.errorMessage = '需要麦克风和摄像头权限才能进行直播推流'
+      } else {
+        this.errorMessage = ''
       }
+      return this.hasMediaPermission
     } catch (error) {
-      console.error('请求权限失败:', error)
+      this.hasMediaPermission = false
+      this.errorMessage = String(error)
+      console.error('[LiveKitUtil] requestPermissions failed:', error)
+      return false
     }
   }
 
+  private isValidSfuParam(value: string): boolean {
+    const normalized = value.trim()
+    return normalized.length > 0 && normalized.indexOf('__LIVEKIT_') < 0
+  }
+
   /**
-   * 设置事件处理器
+   * 设置 LiveKit SDK 事件处理器，把底层连接状态同步给页面可读字段。
    */
   private setupEventHandlers(): void {
     this.client.on('connected', () => {
       this.roomState = 'connected'
-      console.info('已连接到房间')
+      console.info('[LiveKitUtil] 已连接到房间')
 
-      // 连接成功后启动音频电平观察（500ms 轮询，level > 0.05 视为说话）
       this.client.startAudioLevelObserver((levels: AudioLevelInfo[]) => {
         for (let i = 0; i < levels.length; i++) {
           const info = levels[i]
           if (info.isLocal) {
-            // 本地麦克风电平 → 更新 UI 音量条
             if (info.isSpeaking) {
-              console.debug('[VoiceCallPage] 本地正在说话')
+              console.debug('[LiveKitUtil] 本地正在说话')
             } else {
-              console.debug('[VoiceCallPage] 本地未说话')
+              console.debug('[LiveKitUtil] 本地未说话')
             }
           } else {
-            // 远端音频电平 → 更新对应参与者 UI
             if (info.isSpeaking) {
-              console.debug('[VoiceCallPage] 远端正在说话')
+              console.debug('[LiveKitUtil] 远端正在说话')
             } else {
-              console.debug('[VoiceCallPage] 远端未说话')
+              console.debug('[LiveKitUtil] 远端未说话')
             }
           }
         }
@@ -159,58 +236,39 @@ class LiveKitUtil {
 
     this.client.on('disconnected', (data: ESObject) => {
       this.roomState = 'disconnected'
-      // 断开连接时停止音频电平观察，避免不可见状态下继续消耗资源
+      this.isVideoPublished = false
       this.client.stopAudioLevelObserver()
       if (data.error) {
-        this.errorMessage = data.error.message
+        this.errorMessage = String(data.error.message)
       }
-      console.info('已断开连接')
+      console.info('[LiveKitUtil] 已断开连接')
     })
 
     this.client.on('reconnecting', () => {
       this.roomState = 'reconnecting'
-      console.info('正在重连...')
+      console.info('[LiveKitUtil] 正在重连...')
     })
 
     this.client.on('participantConnected', (data: RtcModel) => {
-      console.info('参与者加入:', data.participant.identity)
+      console.info('[LiveKitUtil] 参与者加入:', data.participant.identity)
       this.participantCount++
     })
 
     this.client.on('participantDisconnected', (data: RtcModel) => {
-      console.info('参与者离开:', data.participant.identity)
+      console.info('[LiveKitUtil] 参与者离开:', data.participant.identity)
       this.participantCount--
     })
 
     this.client.on('trackSubscribed', () => {
-      console.info('收到远程音频轨道')
+      console.info('[LiveKitUtil] 收到远程音频轨道')
     })
 
     this.client.on('activeSpeakersChanged', (data: SpeakerModel) => {
       this.remoteSpeakers = data.speakers.map(s => s.sid)
     })
-
-  }
-
-  /**
-   * 获取状态文本
-   */
-  private getStateText(): string {
-    switch (this.roomState) {
-      case 'disconnected':
-        return '未连接'
-      case 'connecting':
-        return '连接中...'
-      case 'connected':
-        return '已连接'
-      case 'reconnecting':
-        return '重连中...'
-      default:
-        return '未知'
-    }
   }
 }
 
-let liveKitUtil = new LiveKitUtil()
+const liveKitUtil = new LiveKitUtil()
 
 export default liveKitUtil

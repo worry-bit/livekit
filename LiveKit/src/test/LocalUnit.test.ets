@@ -11,6 +11,16 @@ import {
   shouldShowKooFoldedSwitch,
   shouldShowKooLiveAddPanel
 } from '../main/ets/koophone/KooLiveSlotPolicy';
+import {
+  canToggleLiveKitPush,
+  getLiveKitPushButtonColor,
+  getLiveKitPushButtonText,
+  isLiveKitPushConfigReady,
+  LIVEKIT_PUSH_DISABLED,
+  LIVEKIT_PUSH_GREEN,
+  LIVEKIT_PUSH_RED,
+  shouldStopLiveKitPush
+} from '../main/ets/koophone/LiveKitPushPolicy';
 
 export default function localUnitTest() {
   describe('localUnitTest', () => {
@@ -282,6 +292,37 @@ export default function localUnitTest() {
       expect(first).assertEqual('taobao-surface-1');
       expect(second).assertEqual('taobao-surface-2');
       expect(first === second).assertEqual(false);
+    });
+  });
+
+  describe('LiveKit local camera push policy', () => {
+    it('rejectsPlaceholderSfuConfig', 0, () => {
+      expect(isLiveKitPushConfigReady('__LIVEKIT_SFU_URL__', 'token')).assertEqual(false);
+      expect(isLiveKitPushConfigReady('wss://sfu.example.com', '__LIVEKIT_SFU_TOKEN__')).assertEqual(false);
+      expect(isLiveKitPushConfigReady('wss://sfu.example.com', 'jwt-token')).assertEqual(true);
+    });
+
+    it('showsStartAndStopButtonStates', 0, () => {
+      expect(getLiveKitPushButtonText(false, false)).assertEqual('开始直播推流');
+      expect(getLiveKitPushButtonText(true, false)).assertEqual('关闭直播推流');
+      expect(getLiveKitPushButtonText(false, true)).assertEqual('推流中...');
+      expect(getLiveKitPushButtonText(true, true)).assertEqual('关闭中...');
+
+      expect(getLiveKitPushButtonColor(false, false)).assertEqual(LIVEKIT_PUSH_GREEN);
+      expect(getLiveKitPushButtonColor(true, false)).assertEqual(LIVEKIT_PUSH_RED);
+      expect(getLiveKitPushButtonColor(false, true)).assertEqual(LIVEKIT_PUSH_DISABLED);
+    });
+
+    it('togglesOnlyAfterPreviewSurfaceReady', 0, () => {
+      expect(canToggleLiveKitPush(false, false)).assertEqual(false);
+      expect(canToggleLiveKitPush(true, true)).assertEqual(false);
+      expect(canToggleLiveKitPush(true, false)).assertEqual(true);
+    });
+
+    it('stopsPushWhenNoKooPhoneLiveIsActive', 0, () => {
+      expect(shouldStopLiveKitPush(true, false)).assertEqual(false);
+      expect(shouldStopLiveKitPush(false, true)).assertEqual(false);
+      expect(shouldStopLiveKitPush(false, false)).assertEqual(true);
     });
   });
 }

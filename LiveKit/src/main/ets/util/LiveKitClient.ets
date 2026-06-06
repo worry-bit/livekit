@@ -91,6 +91,10 @@ export class LiveKitClient implements RTCEngineDelegate {
     return this._state === RoomState.CONNECTED
   }
 
+  get videoPublished(): boolean {
+    return this.isVideoPublished
+  }
+
   // ==================== 公共 API ====================
 
   /**

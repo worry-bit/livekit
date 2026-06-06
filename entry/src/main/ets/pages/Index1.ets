@@ -1,3 +1,4 @@
+import liveKitUtil from '../rtc/LiveKitUtil'
 import {
   createKooAuthService,
   createKooPhonePlayer,
@@ -9,14 +10,19 @@ import {
   KooPhoneState,
   KooAuthTokenResult,
   KooInstancePoolEntry,
+  canToggleLiveKitPush,
   LivePlatformConfig,
   buildKooLiveSurfaceComponentId,
   canStartKooLiveAddSelection,
+  getLiveKitPushButtonColor,
+  getLiveKitPushButtonText,
   getKooLiveAddOptionTitle,
+  isLiveKitPushConfigReady,
   isKooLiveAddOptionDisabled,
   resolveKooFoldedVisibleSlot,
   selectNextAvailableKooInstance,
   shouldRenderKooFoldedSwitch,
+  shouldStopLiveKitPush,
   shouldShowKooLiveAddPanel,
   TouchAction,
   TouchPoint
@@ -81,6 +87,11 @@ const LIVE_RED = '#E53935'
 const OVERLAY_BACKGROUND = '#4D000000'
 const FOLDED_SWITCH_GREEN = '#2EAD5B'
 const ENABLE_FOLDED_LIVE_SWITCH = false
+const LIVEKIT_SFU_URL = '__LIVEKIT_SFU_URL__'
+const LIVEKIT_SFU_TOKEN = '__LIVEKIT_SFU_TOKEN__'
+const LIVEKIT_PREVIEW_COMPONENT_ID = 'livekit-local-camera-preview'
+const LIVEKIT_PANEL_BACKGROUND = '#66000000'
+const LIVEKIT_SWITCH_CAMERA = '#2F6FEB'
 
 @Entry
 @Component
@@ -90,8 +101,10 @@ struct Index1 {
   private douyinPlayer: KooPhonePlayer = createKooPhonePlayer()
   private taobaoXCtrl: XComponentController = new XComponentController()
   private douyinXCtrl: XComponentController = new XComponentController()
+  private liveKitXCtrl: XComponentController = new XComponentController()
   private taobaoSurfaceId: string = ''
   private douyinSurfaceId: string = ''
+  private liveKitSurfaceId: string = ''
   private taobaoStarted: boolean = false
   private douyinStarted: boolean = false
   private taobaoRetryTimer: number = -1
@@ -125,6 +138,10 @@ struct Index1 {
   @State foldedVisiblePlatform: LivePlatform = LivePlatform.TAOBAO
   @State pendingAddTaobao: boolean = false
   @State pendingAddDouyin: boolean = false
+  @State liveKitPreviewReady: boolean = false
+  @State liveKitPushing: boolean = false
+  @State liveKitBusy: boolean = false
+  @State liveKitErrorText: string = ''
 
   aboutToAppear(): void {
     this.taobaoPlayer.onStateChange = (s: KooPhoneState) => {
@@ -280,6 +297,7 @@ struct Index1 {
    * 页面销毁、停止串流或重试前使用的统一清理方法。
    */
   private closeAllStreams(): void {
+    this.stopLiveKitPushForLifecycle()
     this.clearRetryTimer(LivePlatform.TAOBAO)
     this.clearRetryTimer(LivePlatform.DOUYIN)
     this.taobaoPlayer.close()
@@ -299,6 +317,141 @@ struct Index1 {
     this.taobaoInstanceId = TAOBAO_INSTANCE_ID
     this.douyinInstanceId = DOUYIN_INSTANCE_ID
     this.clearPendingAddSelection()
+  }
+
+  /**
+   * 页面销毁或云机直播全部停止时兜底释放本机摄像头推流。
+   * 这里不阻塞 KooPhone 关闭流程，异步完成 unpublishVideo 和 leaveRoom。
+   */
+  private stopLiveKitPushForLifecycle(): void {
+    if (!this.liveKitPushing && liveKitUtil.roomState === 'disconnected' && !liveKitUtil.isVideoPublished) {
+      return
+    }
+    this.stopLiveKitPush().catch((error: Error) => {
+      console.error('[Index1] Stop LiveKit push for lifecycle failed:', error)
+    })
+  }
+
+  /**
+   * 当所有云机直播都不再处于 active 状态时，自动释放本机摄像头。
+   */
+  private stopLiveKitPushIfNoActiveKooLive(): void {
+    if (shouldStopLiveKitPush(
+      this.isPlatformLiveActive(LivePlatform.TAOBAO),
+      this.isPlatformLiveActive(LivePlatform.DOUYIN)
+    )) {
+      this.stopLiveKitPushForLifecycle()
+    }
+  }
+
+  /**
+   * 全局推流按钮入口：未推流时执行权限、SFU 建连、发布视频；已推流时执行关闭链路。
+   */
+  private async toggleLiveKitPush(): Promise<void> {
+    if (!canToggleLiveKitPush(this.liveKitPreviewReady && this.liveKitSurfaceId.length > 0, this.liveKitBusy)) {
+      return
+    }
+
+    if (this.liveKitPushing) {
+      await this.stopLiveKitPush()
+      return
+    }
+
+    await this.startLiveKitPush()
+  }
+
+  /**
+   * 本机摄像头推流启动链路。必须使用独立的本机预览 XComponent surfaceId，
+   * 不能复用淘宝/抖音云机画面的 surface。
+   */
+  private async startLiveKitPush(): Promise<void> {
+    if (!this.hasAnyPlatformLiveActive()) {
+      this.liveKitErrorText = '请先打开淘宝或抖音云机直播'
+      return
+    }
+
+    if (!isLiveKitPushConfigReady(LIVEKIT_SFU_URL, LIVEKIT_SFU_TOKEN)) {
+      this.liveKitErrorText = '请先替换 LiveKit SFU url/token'
+      return
+    }
+
+    if (!this.liveKitPreviewReady || this.liveKitSurfaceId.length === 0) {
+      this.liveKitErrorText = '本机摄像头预览 surface 未准备好'
+      return
+    }
+
+    this.liveKitBusy = true
+    this.liveKitErrorText = ''
+    try {
+      const permissionGranted = await liveKitUtil.requestPermissions()
+      if (!permissionGranted) {
+        this.liveKitErrorText = liveKitUtil.errorMessage
+        return
+      }
+
+      const joined = await liveKitUtil.joinRoom(LIVEKIT_SFU_URL, LIVEKIT_SFU_TOKEN)
+      if (!joined) {
+        this.liveKitErrorText = liveKitUtil.errorMessage
+        return
+      }
+
+      const published = await liveKitUtil.publishVideo(this.liveKitSurfaceId)
+      if (!published) {
+        this.liveKitErrorText = liveKitUtil.errorMessage
+        await liveKitUtil.unpublishVideo()
+        await liveKitUtil.leaveRoom()
+        return
+      }
+
+      this.liveKitPushing = true
+    } catch (error) {
+      this.liveKitErrorText = String(error)
+      await liveKitUtil.unpublishVideo()
+      await liveKitUtil.leaveRoom()
+      this.liveKitPushing = false
+    } finally {
+      this.liveKitBusy = false
+    }
+  }
+
+  /**
+   * 本机摄像头推流关闭链路。先取消视频轨道，再断开 SFU 房间。
+   */
+  private async stopLiveKitPush(): Promise<void> {
+    if (this.liveKitBusy) {
+      return
+    }
+
+    this.liveKitBusy = true
+    this.liveKitErrorText = ''
+    try {
+      const unpublished = await liveKitUtil.unpublishVideo()
+      const left = await liveKitUtil.leaveRoom()
+      if (!unpublished || !left) {
+        this.liveKitErrorText = liveKitUtil.errorMessage
+      }
+    } catch (error) {
+      this.liveKitErrorText = String(error)
+    } finally {
+      this.liveKitPushing = false
+      this.liveKitBusy = false
+    }
+  }
+
+  /**
+   * 切换本机摄像头方向。只影响本机推到 SFU 的摄像头流，不改变云机布局。
+   */
+  private async switchLiveKitCamera(): Promise<void> {
+    if (!this.liveKitPushing || this.liveKitBusy) {
+      return
+    }
+
+    const switched = await liveKitUtil.switchCamera()
+    if (!switched) {
+      this.liveKitErrorText = liveKitUtil.errorMessage
+    } else {
+      this.liveKitErrorText = ''
+    }
   }
 
   private resetPlatformRuntime(platform: LivePlatform): void {
@@ -857,6 +1010,7 @@ struct Index1 {
     if (!this.shouldStartTaobao && !this.shouldStartDouyin) {
       this.isLiveStarted = false
     }
+    this.stopLiveKitPushIfNoActiveKooLive()
   }
 
   private isPlatformFailed(platform: LivePlatform): boolean {
@@ -1008,6 +1162,7 @@ struct Index1 {
       this.setPlatformStateText(platform, 'failed')
       this.setPlatformErrorText(platform, `${reason}; 当前租户共享实例池已耗尽`)
       this.ensureFoldedVisiblePlatform()
+      this.stopLiveKitPushIfNoActiveKooLive()
       return
     }
 
@@ -1381,6 +1536,143 @@ struct Index1 {
     }
   }
 
+  private getLiveKitPreviewWidth(): number {
+    return this.isExpandedScreen() ? 92 : 76
+  }
+
+  private getLiveKitPreviewHeight(): number {
+    return this.isExpandedScreen() ? 130 : 108
+  }
+
+  private getLiveKitPushButtonWidth(): number {
+    return this.liveKitPushing ? 118 : 108
+  }
+
+  /**
+   * 本机摄像头预览 surface。这个 surface 只给 LiveKit publishVideo 使用，
+   * 与淘宝/抖音云机画面的 KooPhone surface 完全隔离。
+   */
+  @Builder
+  liveKitPreviewSurface() {
+    Stack({ alignContent: Alignment.Center }) {
+      XComponent({
+        id: LIVEKIT_PREVIEW_COMPONENT_ID,
+        type: XComponentType.SURFACE,
+        controller: this.liveKitXCtrl
+      })
+      .width('100%')
+      .height('100%')
+      .backgroundColor(Color.Black)
+      .onLoad(() => {
+        this.liveKitSurfaceId = this.liveKitXCtrl.getXComponentSurfaceId()
+        this.liveKitPreviewReady = true
+        console.info('[Index1] LiveKit local preview loaded, surfaceId:', this.liveKitSurfaceId)
+      })
+      .onDestroy(() => {
+        this.liveKitPreviewReady = false
+        this.liveKitSurfaceId = ''
+        this.stopLiveKitPushForLifecycle()
+      })
+
+      if (!this.liveKitPushing) {
+        Text(this.liveKitPreviewReady ? '本机预览' : '等待预览')
+          .fontSize(9)
+          .fontColor('#DDE3EA')
+          .maxLines(1)
+      }
+    }
+    .width(this.getLiveKitPreviewWidth())
+    .height(this.getLiveKitPreviewHeight())
+    .backgroundColor(Color.Black)
+    .borderRadius(6)
+    .clip(true)
+    .border({ width: 1, color: '#66FFFFFF' })
+  }
+
+  /**
+   * 开始/关闭本机 LiveKit 推流的全局按钮。
+   */
+  @Builder
+  liveKitPushButton() {
+    Row() {
+      Text(getLiveKitPushButtonText(this.liveKitPushing, this.liveKitBusy))
+        .fontSize(10)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(Color.White)
+        .maxLines(1)
+    }
+    .width(this.getLiveKitPushButtonWidth())
+    .height(30)
+    .justifyContent(FlexAlign.Center)
+    .borderRadius(15)
+    .backgroundColor(getLiveKitPushButtonColor(this.liveKitPushing, this.liveKitBusy))
+    .opacity(canToggleLiveKitPush(this.liveKitPreviewReady && this.liveKitSurfaceId.length > 0, this.liveKitBusy) ? 1 : 0.58)
+    .onClick(() => {
+      this.toggleLiveKitPush()
+    })
+  }
+
+  /**
+   * 切换本机前/后摄像头。只有推流成功后才生效。
+   */
+  @Builder
+  liveKitSwitchCameraButton() {
+    Row() {
+      Text('切换摄像头')
+        .fontSize(10)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(Color.White)
+        .maxLines(1)
+    }
+    .width(78)
+    .height(30)
+    .justifyContent(FlexAlign.Center)
+    .borderRadius(15)
+    .backgroundColor(LIVEKIT_SWITCH_CAMERA)
+    .opacity(this.liveKitPushing && !this.liveKitBusy ? 1 : 0.48)
+    .onClick(() => {
+      this.switchLiveKitCamera()
+    })
+  }
+
+  /**
+   * 云机直播态上方的本机推流控制浮层：左侧是本机摄像头预览，
+   * 右侧是推流和切摄像头按钮，并显示失败原因。
+   */
+  @Builder
+  liveKitPushOverlay() {
+    Row() {
+      Blank()
+      Row({ space: 8 }) {
+        this.liveKitPreviewSurface()
+
+        Column({ space: 6 }) {
+          Row({ space: 6 }) {
+            this.liveKitPushButton()
+            this.liveKitSwitchCameraButton()
+          }
+
+          if (this.liveKitErrorText.length > 0) {
+            Text(this.liveKitErrorText)
+              .fontSize(9)
+              .fontColor('#FFD3D3')
+              .maxLines(2)
+              .width(206)
+          }
+        }
+        .justifyContent(FlexAlign.Center)
+      }
+      .padding({ top: 6, right: 8, bottom: 6, left: 6 })
+      .backgroundColor(LIVEKIT_PANEL_BACKGROUND)
+      .borderRadius(8)
+      Blank()
+    }
+    .width('100%')
+    .height(this.getLiveKitPreviewHeight() + 16)
+    .position({ x: 0, y: 8 })
+    .zIndex(60)
+  }
+
   private getLiveSlotX(platform: LivePlatform): number {
     if (this.isExpandedScreen() && platform === LivePlatform.DOUYIN) {
       return this.rootWidth / 2
@@ -1649,6 +1941,8 @@ struct Index1 {
       } else {
         this.inactiveLiveSlotLayer(this.getFoldedSlotPlatform())
       }
+
+      this.liveKitPushOverlay()
     }
     .width('100%')
     .height('100%')

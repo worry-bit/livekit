@@ -23,6 +23,10 @@ flowchart TD
   Page["Index1.ets\n折叠屏选择页/直播页"]
   Pool["KooInstancePool\n共享实例池选择策略"]
   SlotPolicy["KooLiveSlotPolicy\n内屏补开面板策略"]
+  PushPolicy["LiveKitPushPolicy\n本机推流按钮策略"]
+  PushUtil["LiveKitUtil\n权限/SFU/摄像头推流"]
+  PushClient["LiveKitClient\nLiveKit 房间客户端"]
+  PushRtc["RTCEngine\n本机摄像头采集/发布"]
   Auth["KooAuthService\nIAM token + KooPhone auth"]
   PlayerA["KooPhonePlayer\n淘宝实例"]
   PlayerB["KooPhonePlayer\n抖音实例"]
@@ -34,6 +38,8 @@ flowchart TD
   Ability -->|"loadContent('pages/Index1')"| Page
   Page -->|"selectNextAvailableKooInstance()"| Pool
   Page -->|"shouldShowKooLiveAddPanel()"| SlotPolicy
+  Page -->|"getLiveKitPushButtonText()"| PushPolicy
+  Page -->|"startLiveKitPush()"| PushUtil
   Page -->|"startPlatformIfReady()"| Auth
   Page -->|"open(params, surfaceId)"| PlayerA
   Page -->|"open(params, surfaceId)"| PlayerB
@@ -43,8 +49,11 @@ flowchart TD
   PlayerB --> RTC
   PlayerA --> Input
   PlayerB --> Input
+  PushUtil --> PushClient
+  PushClient --> PushRtc
   Signal <-->|"authorize/start/message"| Cloud
   RTC <-->|"SDP/ICE/VideoTrack"| Cloud
+  PushRtc -->|"publish camera track"| SFU["LiveKit SFU"]
   Input -->|"DataChannel input"| RTC
 ```
 
@@ -110,6 +119,45 @@ platformOption(platform, title)
 外屏停止当前直播后再展开内屏补开时，还会走 `invalidatePlatformSurface(platform)`。该方法会清空旧 `surfaceId`、替换该平台的 `XComponentController`，并递增 `taobaoSurfaceRevision / douyinSurfaceRevision`。`taobaoSurface()` 和 `douyinSurface()` 会把 revision 拼进 `XComponent({ id })`，强制 ArkUI 为补开的直播创建当前内屏槽位的新 native surface，避免播放器继续绑定外屏旧 surface。
 
 补开后内屏能否立即从“暂无直播内容”切到直播 surface，取决于 `shouldStartTaobao / shouldStartDouyin`。这两个字段必须是 `@State`，因为 `liveSurfaceLayer()` 和 `inactiveLiveSlotLayer()` 都通过 `isPlatformLiveActive()` 读取它们决定渲染直播层还是空态。如果它们只是普通字段，播放器仍可能已经 open 并进入 playing，但 ArkUI 不会因为普通字段变化重绘，直到折叠/展开触发 `rootWidth` 变化后才显示直播画面。
+
+本机摄像头 LiveKit 推流链路：
+
+```text
+liveKitPushOverlay()
+  -> liveKitPreviewSurface()
+  -> XComponent.onLoad()
+  -> liveKitSurfaceId = liveKitXCtrl.getXComponentSurfaceId()
+  -> liveKitPushButton()
+  -> toggleLiveKitPush()
+  -> startLiveKitPush()
+  -> liveKitUtil.requestPermissions()
+  -> liveKitUtil.joinRoom(LIVEKIT_SFU_URL, LIVEKIT_SFU_TOKEN)
+  -> liveKitUtil.publishVideo(liveKitSurfaceId)
+```
+
+关闭推流链路：
+
+```text
+liveKitPushButton()
+  -> toggleLiveKitPush()
+  -> stopLiveKitPush()
+  -> liveKitUtil.unpublishVideo()
+  -> liveKitUtil.leaveRoom()
+```
+
+切换摄像头链路：
+
+```text
+liveKitSwitchCameraButton()
+  -> switchLiveKitCamera()
+  -> liveKitUtil.switchCamera()
+  -> LiveKitClient.switchCamera()
+  -> RTCEngine.switchCamera()
+```
+
+这里的 `liveKitSurfaceId` 只来自本机摄像头小预览 XComponent，不能使用 `taobaoSurfaceId / douyinSurfaceId`。淘宝/抖音的 surface 是云机视频显示层，本机推流 surface 是真实 Mate X7 摄像头采集和本地预览层。两者如果混用，会导致云机画面渲染和本机摄像头采集互相覆盖。
+
+`LIVEKIT_SFU_URL / LIVEKIT_SFU_TOKEN` 在 git 中必须保持 `__LIVEKIT_*__` 占位符。真机端到端调试前，需要本地临时替换为真实 SFU 参数，构建安装后再恢复占位符。
 
 ## 4. 串流鉴权和 open 流程
 
