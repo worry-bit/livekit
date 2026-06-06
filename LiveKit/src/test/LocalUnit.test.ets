@@ -5,6 +5,8 @@ import {
   canStartKooLiveAddSelection,
   getKooLiveAddOptionTitle,
   isKooLiveAddOptionDisabled,
+  resolveKooFoldedVisibleSlot,
+  shouldShowKooFoldedSwitch,
   shouldShowKooLiveAddPanel
 } from '../main/ets/koophone/KooLiveSlotPolicy';
 
@@ -224,6 +226,28 @@ export default function localUnitTest() {
 
       expect(inactiveTitle).assertEqual('淘宝直播');
       expect(activeTitle).assertEqual('抖音直播（正在直播中）');
+    });
+
+    it('defaultsFoldedDisplayToLeftSlotWhenBothStreamsActive', 0, () => {
+      const slot = resolveKooFoldedVisibleSlot(true, true);
+
+      expect(slot).assertEqual('left');
+    });
+
+    it('defaultsFoldedDisplayToRightSlotWhenOnlyRightStreamActive', 0, () => {
+      const slot = resolveKooFoldedVisibleSlot(false, true);
+
+      expect(slot).assertEqual('right');
+    });
+
+    it('showsFoldedSwitchOnlyForFoldedDualStreams', 0, () => {
+      const foldedDual = shouldShowKooFoldedSwitch(false, true, true);
+      const expandedDual = shouldShowKooFoldedSwitch(true, true, true);
+      const foldedSingle = shouldShowKooFoldedSwitch(false, true, false);
+
+      expect(foldedDual).assertEqual(true);
+      expect(expandedDual).assertEqual(false);
+      expect(foldedSingle).assertEqual(false);
     });
   });
 }

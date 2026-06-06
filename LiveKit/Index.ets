@@ -68,6 +68,8 @@ export {
   canStartKooLiveAddSelection,
   getKooLiveAddOptionTitle,
   isKooLiveAddOptionDisabled,
+  resolveKooFoldedVisibleSlot,
+  shouldShowKooFoldedSwitch,
   shouldShowKooLiveAddPanel
 } from './src/main/ets/koophone/KooLiveSlotPolicy'
 export type { KooLiveAddSlotState } from './src/main/ets/koophone/KooLiveSlotPolicy'

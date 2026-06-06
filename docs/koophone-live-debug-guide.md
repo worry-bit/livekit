@@ -74,7 +74,8 @@ platformOption(platform, title)
   -> isLiveStarted = true 进入直播页
   -> livePage()
   -> liveContent()
-  -> streamPanel(platform)
+  -> liveSurfaceLayer(platform)
+  -> liveControlLayer(platform)
   -> taobaoSurface() / douyinSurface()
   -> XComponent.onLoad()
   -> getXComponentSurfaceId()
@@ -97,7 +98,7 @@ platformOption(platform, title)
   -> resetPlatformRuntime(platform)
   -> assignInitialInstanceForPlatform(platform)
   -> shouldStartPlatform = true
-  -> streamPanel(platform)
+  -> liveSurfaceLayer(platform)
   -> XComponent.onLoad()
   -> startPlatformIfReady(platform)
 ```
@@ -171,12 +172,14 @@ KooPhone 实例鉴权响应字段映射：
 - 展开屏：`liveContent()` 使用固定左右槽位，左侧固定淘宝，右侧固定抖音。
 - 单路直播且展开内屏时，未直播半屏显示和初始页一致的补开选择页；只有正在直播的平台置灰不可点，并显示“（正在直播中）”，已停止的平台会恢复可选。
 - 外屏单路直播时不显示补开选择页；必须展开 Mate X7 内屏后，才能在未直播半屏选择第二路。
-- 外屏双路直播时，`foldedDualStreamPanel()` 会同时保留淘宝和抖音两个 `XComponent` surface，用层级切换当前可见直播，避免切换时销毁另一直播画面。
+- 直播中的 `XComponent` 由 `liveSurfaceLayer(platform)` 常驻渲染。内屏/外屏切换只调整同一层的位置、宽度、透明度和层级，避免折叠时销毁并重建 surface。
+- 从内屏折叠到外屏时，`prepareFoldedVisiblePlatformOnFold()` 会同步外屏默认可见直播：双路时固定显示内屏左侧淘宝；只有右侧抖音在播时直接显示抖音。
+- 外屏双路直播时，两路 `XComponent` surface 都保持挂载，切换按钮只改变 `foldedVisiblePlatform` 和可见层级，减少切换黑屏。
 - 外屏双路直播点击当前直播的“停止直播”后，不自动跳到另一直播，而是在当前槽位显示和初始页一致的补开选择页；被停止的平台可选，另一正在直播的平台置灰并显示“（正在直播中）”。
 - 单路停止、失败或未启动但不满足补开条件时，对应槽位显示“暂无直播内容”或失败信息，另一槽位不受影响。
 - 外屏/窄屏：`getFoldedSlotPlatform()` 决定当前槽位。双路直播时显示 `foldedVisiblePlatform`；当前槽位停止后保留该槽位显示补开页；普通单路直播仍显示活跃直播。
-- 外屏双路都处于直播态时，左上角显示当前直播状态，右上角显示绿色“切换直播”按钮。点击只改外屏可见平台，不改变展开屏左淘宝、右抖音布局。
-- 每个 `streamPanel(platform)` 内部都有独立“停止直播”按钮，点击后只关闭当前平台播放器和该路重试定时器。
+- 外屏双路都处于直播态时，`liveControlLayer()` 在最高层显示控件：左上角当前直播状态、右上角绿色“切换直播”、右下角红色“停止直播”。点击切换只改外屏可见平台，不改变展开屏左淘宝、右抖音布局。
+- 每个活跃平台都有独立“停止直播”按钮，点击后只关闭当前平台播放器和该路重试定时器。
 - 直播状态浮层由 `streamStatusOverlay(platform)` 渲染，平台名约 `9sp`，状态/错误约 `7sp`，贴近左上角，背景 30% 不透明度，减少遮挡。
 
 ## 6. 重试逻辑

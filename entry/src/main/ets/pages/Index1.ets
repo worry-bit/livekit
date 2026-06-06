@@ -13,7 +13,9 @@ import {
   canStartKooLiveAddSelection,
   getKooLiveAddOptionTitle,
   isKooLiveAddOptionDisabled,
+  resolveKooFoldedVisibleSlot,
   selectNextAvailableKooInstance,
+  shouldShowKooFoldedSwitch,
   shouldShowKooLiveAddPanel,
   TouchAction,
   TouchPoint
@@ -764,7 +766,11 @@ struct Index1 {
   }
 
   private shouldShowFoldedSwitch(): boolean {
-    return !this.isExpandedScreen() && this.isBothPlatformsLiveActive()
+    return shouldShowKooFoldedSwitch(
+      this.isExpandedScreen(),
+      this.isPlatformLiveActive(LivePlatform.TAOBAO),
+      this.isPlatformLiveActive(LivePlatform.DOUYIN)
+    )
   }
 
   private isFoldedVisiblePlatform(platform: LivePlatform): boolean {
@@ -787,6 +793,18 @@ struct Index1 {
 
   private ensureFoldedVisiblePlatform(): void {
     this.foldedVisiblePlatform = this.getFoldedDisplayPlatform()
+  }
+
+  /**
+   * 内屏折叠到外屏时同步默认可见直播。双路直播固定展示内屏左侧淘宝；
+   * 单路直播则展示唯一活跃的平台，避免右侧单路折叠后落到空槽位。
+   */
+  private prepareFoldedVisiblePlatformOnFold(): void {
+    const slot = resolveKooFoldedVisibleSlot(
+      this.isPlatformLiveActive(LivePlatform.TAOBAO),
+      this.isPlatformLiveActive(LivePlatform.DOUYIN)
+    )
+    this.foldedVisiblePlatform = slot === 'left' ? LivePlatform.TAOBAO : LivePlatform.DOUYIN
   }
 
   /**
@@ -1254,6 +1272,46 @@ struct Index1 {
     }
   }
 
+  private getLiveSlotX(platform: LivePlatform): number {
+    if (this.isExpandedScreen() && platform === LivePlatform.DOUYIN) {
+      return this.rootWidth / 2
+    }
+    return 0
+  }
+
+  private getLiveSlotWidth(): string {
+    return this.isExpandedScreen() ? '50%' : '100%'
+  }
+
+  private isFoldedAddPanelVisible(): boolean {
+    return !this.isExpandedScreen() && this.shouldShowAdditionalSelection(this.foldedVisiblePlatform)
+  }
+
+  private isSurfaceLayerVisible(platform: LivePlatform): boolean {
+    if (!this.isPlatformLiveActive(platform)) {
+      return false
+    }
+    if (this.isExpandedScreen()) {
+      return true
+    }
+    if (this.isFoldedAddPanelVisible()) {
+      return false
+    }
+    return this.getFoldedDisplayPlatform() === platform
+  }
+
+  private getSurfaceLayerOpacity(platform: LivePlatform): number {
+    return this.isSurfaceLayerVisible(platform) ? 1 : 0
+  }
+
+  private getSurfaceLayerZIndex(platform: LivePlatform): number {
+    return this.isSurfaceLayerVisible(platform) ? 2 : 1
+  }
+
+  private isSurfaceLayerTouchable(platform: LivePlatform): boolean {
+    return this.isSurfaceLayerVisible(platform)
+  }
+
   /**
    * 直播状态小浮层。透明度固定在 30%，只保留排障所需的平台名、状态和错误摘要。
    */
@@ -1282,6 +1340,7 @@ struct Index1 {
     .margin({ top: 6, left: 6 })
     .borderRadius(4)
     .backgroundColor(OVERLAY_BACKGROUND)
+    .zIndex(30)
   }
 
   /**
@@ -1303,6 +1362,7 @@ struct Index1 {
     .borderRadius(14)
     .backgroundColor(FOLDED_SWITCH_GREEN)
     .margin({ top: 6, right: 6 })
+    .zIndex(35)
     .onClick(() => {
       this.toggleFoldedVisiblePlatform()
     })
@@ -1325,24 +1385,48 @@ struct Index1 {
     .justifyContent(FlexAlign.Center)
     .borderRadius(14)
     .backgroundColor(LIVE_RED)
+    .zIndex(35)
     .onClick(() => {
       this.stopPlatformStream(platform)
     })
   }
 
   /**
-   * 直播画面面板，包含视频 surface、低透明状态浮层、外屏切换按钮和单路停止按钮。
+   * 稳定直播 surface 层。内屏/外屏只调整该层的位置、宽度、透明度和层级，
+   * 不通过 if/else 重建直播中的 XComponent，减少折叠到外屏时的黑屏等待。
    */
   @Builder
-  streamPanel(platform: LivePlatform) {
-    Stack({ alignContent: Alignment.TopStart }) {
-      this.surfaceForPlatform(platform)
-
-      if (this.shouldShowFoldedSwitch()) {
-        this.foldedSwitchButton()
+  liveSurfaceLayer(platform: LivePlatform) {
+    if (this.isPlatformLiveActive(platform)) {
+      Stack() {
+        this.surfaceForPlatform(platform)
       }
+      .width(this.getLiveSlotWidth())
+      .height('100%')
+      .position({ x: this.getLiveSlotX(platform), y: 0 })
+      .opacity(this.getSurfaceLayerOpacity(platform))
+      .zIndex(this.getSurfaceLayerZIndex(platform))
+      .hitTestBehavior(this.isSurfaceLayerTouchable(platform) ? HitTestMode.Default : HitTestMode.None)
+    }
+  }
 
+  /**
+   * 直播控制层。状态浮层、外屏切换按钮、停止按钮都放在 surface 上方，
+   * 避免 Native surface 层盖住 ArkUI 控件导致外屏按钮不可见。
+   */
+  @Builder
+  liveControlLayer(platform: LivePlatform, showFoldedSwitch: boolean) {
+    Stack({ alignContent: Alignment.TopStart }) {
       this.streamStatusOverlay(platform)
+
+      if (showFoldedSwitch) {
+        Row() {
+          Blank()
+          this.foldedSwitchButton()
+        }
+        .width('100%')
+        .zIndex(35)
+      }
 
       Column() {
         Blank()
@@ -1355,60 +1439,12 @@ struct Index1 {
       }
       .width('100%')
       .height('100%')
+      .zIndex(35)
     }
-    .width('100%')
+    .width(this.getLiveSlotWidth())
     .height('100%')
-    .backgroundColor(Color.Black)
-  }
-
-  /**
-   * 外屏双路直播时保留两路 surface，只通过层级和透明度切换可见平台。
-   * 这样切换直播不会销毁另一播放器的渲染面，体感上更接近无缝切换。
-   */
-  @Builder
-  foldedSurfaceLayer(platform: LivePlatform) {
-    Stack() {
-      this.surfaceForPlatform(platform)
-    }
-    .width('100%')
-    .height('100%')
-    .opacity(this.isFoldedVisiblePlatform(platform) ? 1 : 0)
-    .zIndex(this.isFoldedVisiblePlatform(platform) ? 2 : 1)
-  }
-
-  /**
-   * 外屏双直播专用面板。左上角只显示当前直播状态，右上角显示绿色切换按钮；
-   * 停止按钮始终作用于当前可见直播。
-   */
-  @Builder
-  foldedDualStreamPanel() {
-    Stack({ alignContent: Alignment.TopStart }) {
-      this.foldedSurfaceLayer(LivePlatform.TAOBAO)
-      this.foldedSurfaceLayer(LivePlatform.DOUYIN)
-
-      this.streamStatusOverlay(this.getFoldedDisplayPlatform())
-
-      Row() {
-        Blank()
-        this.foldedSwitchButton()
-      }
-      .width('100%')
-
-      Column() {
-        Blank()
-        Row() {
-          Blank()
-          this.stopPlatformButton(this.getFoldedDisplayPlatform())
-        }
-        .width('100%')
-        .margin({ right: 8, bottom: 10 })
-      }
-      .width('100%')
-      .height('100%')
-    }
-    .width('100%')
-    .height('100%')
-    .backgroundColor(Color.Black)
+    .position({ x: this.getLiveSlotX(platform), y: 0 })
+    .zIndex(30)
   }
 
   /**
@@ -1447,12 +1483,12 @@ struct Index1 {
 
   /**
    * 固定平台槽位。展开屏左槽始终淘宝，右槽始终抖音；
-   * 外屏单路渲染当前槽位；双路直播时由 foldedDualStreamPanel 保留两个 surface。
+   * 外屏单路渲染当前槽位；双路直播的 surface 由 liveSurfaceLayer 常驻。
    */
   @Builder
   platformLiveSlot(platform: LivePlatform) {
     if (this.isPlatformLiveActive(platform)) {
-      this.streamPanel(platform)
+      this.liveControlLayer(platform, this.shouldShowFoldedSwitch())
     } else if (this.shouldShowAdditionalSelection(platform)) {
       this.liveAddSelectionPanel(platform)
     } else {
@@ -1461,32 +1497,53 @@ struct Index1 {
   }
 
   /**
+   * 中层内容：只在对应槽位没有直播时渲染补开面板或空态。
+   */
+  @Builder
+  inactiveLiveSlotLayer(platform: LivePlatform) {
+    if (!this.isPlatformLiveActive(platform)) {
+      Stack() {
+        if (this.shouldShowAdditionalSelection(platform)) {
+          this.liveAddSelectionPanel(platform)
+        } else {
+          this.emptyLivePanel(platform)
+        }
+      }
+      .width(this.getLiveSlotWidth())
+      .height('100%')
+      .position({ x: this.getLiveSlotX(platform), y: 0 })
+      .zIndex(10)
+    }
+  }
+
+  /**
    * 纯直播内容区：展开屏固定左右槽位，外屏/窄屏只展示 foldedVisiblePlatform。
    */
   @Builder
   liveContent() {
-    if (this.isExpandedScreen()) {
-      Row() {
-        Column() {
-          this.platformLiveSlot(LivePlatform.TAOBAO)
-        }
-        .height('100%')
-        .layoutWeight(1)
+    Stack({ alignContent: Alignment.TopStart }) {
+      this.liveSurfaceLayer(LivePlatform.TAOBAO)
+      this.liveSurfaceLayer(LivePlatform.DOUYIN)
 
-        Column() {
-          this.platformLiveSlot(LivePlatform.DOUYIN)
+      if (this.isExpandedScreen()) {
+        this.inactiveLiveSlotLayer(LivePlatform.TAOBAO)
+        this.inactiveLiveSlotLayer(LivePlatform.DOUYIN)
+
+        if (this.isPlatformLiveActive(LivePlatform.TAOBAO)) {
+          this.liveControlLayer(LivePlatform.TAOBAO, false)
         }
-        .height('100%')
-        .layoutWeight(1)
+        if (this.isPlatformLiveActive(LivePlatform.DOUYIN)) {
+          this.liveControlLayer(LivePlatform.DOUYIN, false)
+        }
+      } else if (this.isPlatformLiveActive(this.getFoldedSlotPlatform())) {
+        this.liveControlLayer(this.getFoldedDisplayPlatform(), this.shouldShowFoldedSwitch())
+      } else {
+        this.inactiveLiveSlotLayer(this.getFoldedSlotPlatform())
       }
-      .width('100%')
-      .height('100%')
-      .backgroundColor(Color.Black)
-    } else if (this.isBothPlatformsLiveActive()) {
-      this.foldedDualStreamPanel()
-    } else {
-      this.platformLiveSlot(this.getFoldedSlotPlatform())
     }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(Color.Black)
   }
 
   /**
@@ -1509,8 +1566,14 @@ struct Index1 {
     .height('100%')
     .backgroundColor(this.isLiveStarted ? Color.Black : PAGE_BACKGROUND)
     .onAreaChange((_old: Area, newArea: Area) => {
-      this.rootWidth = newArea.width as number
+      const previousExpanded = this.isExpandedScreen()
+      const nextWidth = newArea.width as number
+      const nextExpanded = nextWidth >= EXPANDED_SCREEN_MIN_WIDTH
+      this.rootWidth = nextWidth
       this.rootHeight = newArea.height as number
+      if (this.isLiveStarted && previousExpanded && !nextExpanded) {
+        this.prepareFoldedVisiblePlatformOnFold()
+      }
     })
   }
 }

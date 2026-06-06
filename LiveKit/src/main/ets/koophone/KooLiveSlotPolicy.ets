@@ -27,6 +27,25 @@ export function canStartKooLiveAddSelection(state: KooLiveAddSlotState): boolean
 }
 
 /**
+ * 从内屏折叠到外屏时选择默认显示槽位。
+ * 双路直播固定优先展示内屏左侧；只有左侧没有直播且右侧仍在播时才展示右侧。
+ */
+export function resolveKooFoldedVisibleSlot(isLeftLiveActive: boolean, isRightLiveActive: boolean): string {
+  return isLeftLiveActive ? 'left' : (isRightLiveActive ? 'right' : 'left')
+}
+
+/**
+ * 外屏只有双路直播时才显示切换按钮；内屏不显示该按钮。
+ */
+export function shouldShowKooFoldedSwitch(
+  isExpandedScreen: boolean,
+  isLeftLiveActive: boolean,
+  isRightLiveActive: boolean
+): boolean {
+  return !isExpandedScreen && isLeftLiveActive && isRightLiveActive
+}
+
+/**
  * 补开面板的选项禁用规则：只锁定仍在直播的实例。
  * 曾经选择过但已经停止的直播应恢复可选，允许用户重新补开。
  */
