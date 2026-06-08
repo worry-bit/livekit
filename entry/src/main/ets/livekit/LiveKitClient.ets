@@ -212,6 +212,30 @@ export class LiveKitClient implements RTCEngineDelegate {
   }
 
   /**
+   * 页面关闭本机推流时使用的强制复位入口。
+   * 不等待 unpublish/leave 的信令往返，只同步释放本地采集、渲染器和 PeerConnection，
+   * 避免底层关闭流程卡住 ArkUI 按钮状态。
+   */
+  forceResetForNextPush(): void {
+    console.info('[LiveKitClient] Force resetting local push session')
+    try {
+      this.stopAudioLevelObserver()
+      this.rtcEngine.close()
+      this.signalClient.close()
+    } catch (error) {
+      console.error('[LiveKitClient] Force reset failed:', error)
+    }
+
+    this._state = RoomState.DISCONNECTED
+    this._roomInfo = null
+    this._localParticipant = null
+    this._remoteParticipants.clear()
+    this.isAudioPublished = false
+    this.isVideoPublished = false
+    this.emit('disconnected', { type: 'force-reset' })
+  }
+
+  /**
    * 发布本地音频
    */
   async publishAudio(options?: AudioCaptureOptions): Promise<void> {

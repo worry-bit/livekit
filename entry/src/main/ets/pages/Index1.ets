@@ -87,7 +87,7 @@ const LIVEKIT_SFU_TOKEN = '__LIVEKIT_SFU_TOKEN__'
 const LIVEKIT_PREVIEW_COMPONENT_ID = 'livekit-local-camera-preview'
 const LIVEKIT_PANEL_BACKGROUND = '#66000000'
 const LIVEKIT_SWITCH_CAMERA = '#2F6FEB'
-const LIVEKIT_CLOSE_TIMEOUT_MS = 1200
+const ENABLE_LIVEKIT_PUSH_STOP_BUTTON = true
 
 @Entry
 @Component
@@ -109,6 +109,8 @@ struct Index1 {
   private douyinInstanceId: string = DOUYIN_INSTANCE_ID
   private taobaoTriedInstanceIds: string[] = []
   private douyinTriedInstanceIds: string[] = []
+  private liveKitPreviewResetting: boolean = false
+  private liveKitStopping: boolean = false
 
   @State rootWidth: number = 0
   @State rootHeight: number = 0
@@ -365,7 +367,11 @@ struct Index1 {
     }
 
     if (this.liveKitPushing) {
-      await this.stopLiveKitPush()
+      if (!ENABLE_LIVEKIT_PUSH_STOP_BUTTON) {
+        this.liveKitErrorText = '当前暂不支持关闭直播推流'
+        return
+      }
+      this.stopLiveKitPush()
       return
     }
 
@@ -406,13 +412,15 @@ struct Index1 {
       const joined = await liveKitUtil.joinRoom(LIVEKIT_SFU_URL, LIVEKIT_SFU_TOKEN)
       if (!joined) {
         this.liveKitErrorText = liveKitUtil.errorMessage
+        liveKitUtil.forceResetForNextPush()
+        this.resetLiveKitPreviewSurface()
         return
       }
 
       const published = await liveKitUtil.publishVideo(this.liveKitSurfaceId)
       if (!published) {
         this.liveKitErrorText = liveKitUtil.errorMessage
-        await liveKitUtil.closeAndResetForNextPush(LIVEKIT_CLOSE_TIMEOUT_MS)
+        liveKitUtil.forceResetForNextPush()
         this.resetLiveKitPreviewSurface()
         return
       }
@@ -420,7 +428,7 @@ struct Index1 {
       this.liveKitPushing = true
     } catch (error) {
       this.liveKitErrorText = String(error)
-      await liveKitUtil.closeAndResetForNextPush(LIVEKIT_CLOSE_TIMEOUT_MS)
+      liveKitUtil.forceResetForNextPush()
       this.resetLiveKitPreviewSurface()
       this.liveKitPushing = false
     } finally {
@@ -429,27 +437,30 @@ struct Index1 {
   }
 
   /**
-   * 本机摄像头推流关闭链路。先取消视频轨道，再断开 SFU 房间。
+   * 本机摄像头推流关闭链路。
+   * 真机上 unpublish/leave 可能卡住 UI，因此这里使用同步强制复位：
+   * 先释放本地采集和渲染资源，再立即让按钮回到初始态。
    */
   private async stopLiveKitPush(): Promise<void> {
-    if (this.liveKitBusy) {
+    if (this.liveKitStopping) {
       return
     }
 
-    this.liveKitBusy = true
+    this.liveKitStopping = true
     this.liveKitErrorText = ''
-    const closeTask = liveKitUtil.closeAndResetForNextPush(LIVEKIT_CLOSE_TIMEOUT_MS)
+    try {
+      liveKitUtil.forceResetForNextPush()
+    } catch (error) {
+      this.liveKitErrorText = String(error)
+    }
+
+    this.resetLiveKitPreviewSurface()
     this.liveKitPushing = false
     this.liveKitBusy = false
-    this.resetLiveKitPreviewSurface()
 
-    closeTask.then((closed: boolean) => {
-      if (!closed && this.liveKitErrorText.length === 0) {
-        this.liveKitErrorText = liveKitUtil.errorMessage
-      }
-    }).catch((error: Error) => {
-      this.liveKitErrorText = String(error)
-    })
+    setTimeout(() => {
+      this.liveKitStopping = false
+    }, 160)
   }
 
   /**
@@ -457,13 +468,15 @@ struct Index1 {
    * Native surface 不重建时会停留摄像头最后一帧，导致用户以为摄像头仍在运行。
    */
   private resetLiveKitPreviewSurface(): void {
+    this.liveKitPreviewResetting = true
     this.liveKitPreviewReady = false
     this.liveKitSurfaceId = ''
     this.liveKitXCtrl = new XComponentController()
     this.liveKitPreviewRevision++
     setTimeout(() => {
+      this.liveKitPreviewResetting = false
       this.refreshLiveKitPreviewSurfaceId()
-    }, 80)
+    }, 120)
   }
 
   /**
@@ -1608,6 +1621,9 @@ struct Index1 {
       .onDestroy(() => {
         this.liveKitPreviewReady = false
         this.liveKitSurfaceId = ''
+        if (this.liveKitPreviewResetting) {
+          return
+        }
         this.stopLiveKitPushForLifecycle()
       })
 

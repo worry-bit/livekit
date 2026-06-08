@@ -103,6 +103,25 @@ class LiveKitUtil {
   }
 
   /**
+   * 用户点击“关闭直播推流”时的同步兜底复位。
+   * 不等待 unpublish/leave 的信令链路，先释放本地摄像头和渲染器并换新 client，
+   * 保证 UI 立即回到可再次点击“开始直播推流”的状态。
+   */
+  forceResetForNextPush(): void {
+    const staleClient = this.client
+    this.clientGeneration++
+    this.resetRuntimeState()
+    try {
+      staleClient.forceResetForNextPush()
+    } catch (error) {
+      this.errorMessage = String(error)
+      console.error('[LiveKitUtil] force reset failed:', error)
+    }
+    this.client = createLiveKitClient()
+    this.setupEventHandlers(this.client, this.clientGeneration)
+  }
+
+  /**
    * 切换麦克风静音状态，保留给旧示例页和后续语音控制使用。
    */
   toggleMute(isMuted: boolean): void {
