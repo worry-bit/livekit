@@ -309,10 +309,12 @@ export default function localUnitTest() {
       expect(getLiveKitPushButtonText(true, false)).assertEqual('关闭直播推流');
       expect(getLiveKitPushButtonText(false, true)).assertEqual('推流中...');
       expect(getLiveKitPushButtonText(true, true)).assertEqual('关闭中...');
+      expect(getLiveKitPushButtonText(true, false, false)).assertEqual('直播推流中');
 
       expect(getLiveKitPushButtonColor(false, false)).assertEqual(LIVEKIT_PUSH_GREEN);
       expect(getLiveKitPushButtonColor(true, false)).assertEqual(LIVEKIT_PUSH_RED);
       expect(getLiveKitPushButtonColor(false, true)).assertEqual(LIVEKIT_PUSH_DISABLED);
+      expect(getLiveKitPushButtonColor(true, false, false)).assertEqual(LIVEKIT_PUSH_DISABLED);
     });
 
     it('togglesOnlyAfterPreviewSurfaceReady', 0, () => {
@@ -324,6 +326,8 @@ export default function localUnitTest() {
     it('keepsPushButtonClickableAfterPreviewReset', 0, () => {
       expect(canClickLiveKitPushButton(false)).assertEqual(true);
       expect(canClickLiveKitPushButton(true)).assertEqual(false);
+      expect(canClickLiveKitPushButton(false, false, false)).assertEqual(true);
+      expect(canClickLiveKitPushButton(false, true, false)).assertEqual(false);
     });
 
     it('changesPreviewComponentIdWhenRevisionIncrements', 0, () => {

@@ -87,7 +87,7 @@ const LIVEKIT_SFU_TOKEN = '__LIVEKIT_SFU_TOKEN__'
 const LIVEKIT_PREVIEW_COMPONENT_ID = 'livekit-local-camera-preview'
 const LIVEKIT_PANEL_BACKGROUND = '#66000000'
 const LIVEKIT_SWITCH_CAMERA = '#2F6FEB'
-const ENABLE_LIVEKIT_PUSH_STOP_BUTTON = true
+const ENABLE_LIVEKIT_PUSH_STOP_BUTTON = false
 
 @Entry
 @Component
@@ -362,15 +362,11 @@ struct Index1 {
    * 全局推流按钮入口：未推流时执行权限、SFU 建连、发布视频；已推流时执行关闭链路。
    */
   private async toggleLiveKitPush(): Promise<void> {
-    if (!canClickLiveKitPushButton(this.liveKitBusy)) {
+    if (!canClickLiveKitPushButton(this.liveKitBusy, this.liveKitPushing, ENABLE_LIVEKIT_PUSH_STOP_BUTTON)) {
       return
     }
 
     if (this.liveKitPushing) {
-      if (!ENABLE_LIVEKIT_PUSH_STOP_BUTTON) {
-        this.liveKitErrorText = '当前暂不支持关闭直播推流'
-        return
-      }
       this.stopLiveKitPush()
       return
     }
@@ -1648,7 +1644,7 @@ struct Index1 {
   @Builder
   liveKitPushButton() {
     Row() {
-      Text(getLiveKitPushButtonText(this.liveKitPushing, this.liveKitBusy))
+      Text(getLiveKitPushButtonText(this.liveKitPushing, this.liveKitBusy, ENABLE_LIVEKIT_PUSH_STOP_BUTTON))
         .fontSize(10)
         .fontWeight(FontWeight.Medium)
         .fontColor(Color.White)
@@ -1658,8 +1654,8 @@ struct Index1 {
     .height(30)
     .justifyContent(FlexAlign.Center)
     .borderRadius(15)
-    .backgroundColor(getLiveKitPushButtonColor(this.liveKitPushing, this.liveKitBusy))
-    .opacity(canClickLiveKitPushButton(this.liveKitBusy) ? 1 : 0.58)
+    .backgroundColor(getLiveKitPushButtonColor(this.liveKitPushing, this.liveKitBusy, ENABLE_LIVEKIT_PUSH_STOP_BUTTON))
+    .opacity(canClickLiveKitPushButton(this.liveKitBusy, this.liveKitPushing, ENABLE_LIVEKIT_PUSH_STOP_BUTTON) ? 1 : 0.58)
     .onClick(() => {
       this.toggleLiveKitPush()
     })
