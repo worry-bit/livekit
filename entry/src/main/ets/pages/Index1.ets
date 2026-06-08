@@ -1798,6 +1798,7 @@ struct Index1 {
     .borderRadius(4)
     .backgroundColor(OVERLAY_BACKGROUND)
     .zIndex(30)
+    .hitTestBehavior(HitTestMode.None)
   }
 
   /**
@@ -1883,6 +1884,7 @@ struct Index1 {
         }
         .width('100%')
         .zIndex(35)
+        .hitTestBehavior(HitTestMode.Transparent)
       }
 
       Column() {
@@ -1893,15 +1895,18 @@ struct Index1 {
         }
         .width('100%')
         .margin({ right: 8, bottom: 10 })
+        .hitTestBehavior(HitTestMode.Transparent)
       }
       .width('100%')
       .height('100%')
       .zIndex(35)
+      .hitTestBehavior(HitTestMode.Transparent)
     }
     .width(this.getLiveSlotWidth())
     .height('100%')
     .position({ x: this.getLiveSlotX(platform), y: 0 })
     .zIndex(30)
+    .hitTestBehavior(HitTestMode.Transparent)
   }
 
   /**
