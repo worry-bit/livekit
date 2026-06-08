@@ -22,17 +22,13 @@ import {
 import {
   KooInputController,
   TouchAction,
-  TouchPoint
-} from 'livekit-harmony/src/main/ets/koophone/KooInputController'
-import {
+  TouchPoint,
   createKooPhonePlayer,
-  KooPhonePlayer
-} from 'livekit-harmony/src/main/ets/koophone/KooPhonePlayer'
-import {
+  KooPhonePlayer,
   KooPhoneError,
   KooPhoneParams,
   KooPhoneState
-} from 'livekit-harmony/src/main/ets/koophone/KooPhoneTypes'
+} from 'livekit-harmony'
 
 enum LivePlatform {
   TAOBAO = 'taobao',

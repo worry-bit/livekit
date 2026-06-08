@@ -17,6 +17,11 @@ interface SocketEventFrame {
   payload: Record<string, Object>
 }
 
+interface StartPayload {
+  room: string;
+  times: number;
+}
+
 export class KooSignalClient {
   private ws: webSocket.WebSocket | null = null
   private heartbeatTimer: number | null = null
@@ -103,7 +108,7 @@ export class KooSignalClient {
    * @param times 重连次数，首次连接传 0
    */
   emitStart(boxId: string, times: number = 0): void {
-    const payload: Record<string, Object> = { room: boxId, times }
+    const payload: StartPayload = { room: boxId, times }
     const frame = `42["start",${JSON.stringify(payload)}]`
     console.info('[KooSignalClient] Sent start frame:', frame)
     this.sendFrame(frame)

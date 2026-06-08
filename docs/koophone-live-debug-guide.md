@@ -57,7 +57,7 @@ flowchart TD
   Input -->|"DataChannel input"| RTC
 ```
 
-当前图中的 `KooAuthService / KooPhonePlayer / KooRTCSource / KooSignalClient / LiveKitClient / RTCEngine` 均位于 `entry/src/main/ets/**`。`LiveKit` SDK 模块已恢复到最开始拉取的状态，当前 App 不再通过 `livekit-harmony: file:../LiveKit` 消费这些业务实现。
+当前图中的 `KooAuthService / KooInstancePool / KooLiveSlotPolicy / LiveKitPushPolicy / LiveKitUtil` 位于 `entry/src/main/ets/**`，属于 App 业务编排。`KooPhonePlayer / KooRTCSource / KooSignalClient / KooInputController / KooUserMedia / LiveKitClient / RTCEngine` 位于 `LiveKit/src/main/ets/**`，属于 SDK 原子能力。`entry` 通过 `livekit-harmony: file:../LiveKit` 依赖 SDK，并从 `livekit-harmony` 顶层导入公开接口。
 
 ## 3. 点击后代码怎么走
 
@@ -383,14 +383,14 @@ http://<koophone-host>:8669/openapi/koophone/v1/instances/<kp_id>/auth
 - DevEco Studio 需要 Apple Silicon 版本；x86 版本已卸载。
 - DevEco SDK Manager 下载镜像时出现过 100KB 级别截断包，需要用断点续传补齐。
 - Mate X7 通过 Emulator CLI 创建，实例名为 `Mate_X7_LiveKit`。
-- `entry` 最初依赖本地 HAR：`livekit-harmony: file:../LiveKit`；后续为了避免修改 SDK，当前 App 已改成在 `entry` 内持有 KooPhone/LiveKit 适配实现，`LiveKit` 模块回到初始状态。
+- `entry` 依赖本地 SDK：`livekit-harmony: file:../LiveKit`；2026-06-08 已刷新为 `SpikeX-21/livekit` 最新 `LiveKit`，并在 `LiveKit/Index.ets` 顶层导出 KooPhone 公共接口，`entry` 不再使用 SDK 深路径。
 - ArkTS 不支持 `headers['X-Subject-Token']` 这种动态索引读字段，IAM header 读取改为字符串解析。
 - ArkUI `Button` 默认样式会覆盖禁用态颜色，所以选择页按钮和停止按钮均用 `Row + Text` 自绘。
 - `build-profile.json5` 仍包含同事机器的签名路径；本机自签名材料不应提交到 git。
 - DevEco Emulator CLI 未提供折叠/展开控制，需要用图形工具栏或真机完成外屏截图。
 - KooPhone auth 真实响应为多层嵌套结构，解析逻辑拆到 `KooAuthParser.ets` 并补了本地单测，避免网络环境影响字段映射验证。
 - 实例池切换逻辑拆到 `KooInstancePool.ets`，避免把“跳过当前实例、跳过已尝试实例、跳过被占用实例”的规则散落在 ArkUI 页面里。
-- 早期 `hvigorw test` 会打包旧 H5 JS 参考文件，因此曾在 SDK 侧补过最小 shim；本轮重构后这些 SDK 侧 shim 已撤回，App 构建只包含 `entry`。
+- 早期 `hvigorw test` 会打包旧 H5 JS 参考文件，因此曾在 SDK 侧补过最小 shim；当前以 upstream 最新 `LiveKit` 为准，`entry` 只调用 SDK 顶层导出。
 - 2026-06-05 首次真机 Mate X7 验证时，签名 HAP 已安装并进入双路直播态，`XComponent` surface 均加载成功；当时阻塞在 IAM 配置为空，页面和 hilog 均显示 `IAM config is incomplete`，尚未真正发起 IAM HTTP 请求。
 - 2026-06-05 补齐测试环境 IAM 参数后，真机 Mate X7 双路串流已成功，两路均进入 `playing`；提交前 IAM 账号密码已恢复为占位符。
 - 真机 hilog 曾暴露短效 `device_token/sessionid`，已将 `KooSignalClient` 和 `KooPhonePlayer` 的 URL、start、init 日志改为脱敏输出。

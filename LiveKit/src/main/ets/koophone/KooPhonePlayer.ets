@@ -13,6 +13,7 @@ import {
 import { KooSignalClient } from './KooSignalClient'
 import { KooRTCSource } from './KooRTCSource'
 import { KooInputController, TouchAction, KeyAction, TouchPoint, createKooInputController } from './KooInputController'
+import { KooUserMedia, CameraStateEvent, createKooUserMedia } from './KooUserMedia'
 
 interface InitPayload {
   sole: boolean
@@ -57,6 +58,7 @@ export class KooPhonePlayer {
 
   private signalClient: KooSignalClient = new KooSignalClient()
   private rtcSource: KooRTCSource = new KooRTCSource()
+  readonly userMedia: KooUserMedia = createKooUserMedia()
   readonly inputController: KooInputController = createKooInputController()
 
   // 事件回调
@@ -90,6 +92,7 @@ export class KooPhonePlayer {
     this.sessionId = params.sessionId ?? params.token
     this.uuid = params.uuid ?? this.randomUuid()
 
+    this.setupUserMediaHandlers()
     this.setupSignalHandlers(surfaceId)
     this.setupRTCHandlers()
 
@@ -116,6 +119,7 @@ export class KooPhonePlayer {
 
     this.rtcSource.close()
     this.signalClient.close()
+    this.userMedia.closeCamera()
 
     this.remoteId = ''
     this.streamingId = ''
@@ -128,6 +132,28 @@ export class KooPhonePlayer {
   }
 
   // ==================== 私有方法 ====================
+
+  private setupUserMediaHandlers(): void {
+    // 摄像头成功打开 → 将本地轨道添加到 PeerConnection 并重协商
+    this.userMedia.onSuccess = (action: string, type: string, track: webrtc.MediaStreamTrack | null) => {
+      if (action === 'start' && type === 'video' && track) {
+        console.info('[KooPhonePlayer] Local camera track ready, adding to PC')
+        this.rtcSource.addLocalVideoTrack(track).then(() => {
+          // 对应 H5 _onCameraTrackAdded()：通知云端摄像头已就绪
+          this.inputController.sendTextMessage({
+            "type": 'camera_track_added',
+            "camera_id": this.userMedia.getCameraId()
+          } as Record<string, Object>)
+        })
+      } else if (action === 'stop' && type === 'video') {
+        this.rtcSource.removeLocalVideoTrack()
+      }
+    }
+
+    this.userMedia.onError = (action: string, type: string, err: string) => {
+      console.error('[KooPhonePlayer] UserMedia error:', action, type, err)
+    }
+  }
 
   private setupSignalHandlers(surfaceId: string): void {
     this.signalClient.onAuthorize = (authorized: boolean) => {
@@ -155,6 +181,12 @@ export class KooPhonePlayer {
       this.rtcSource.open(this.params?.iceServers ?? [])
       this.rtcSource.setSurfaceId(surfaceId)
 
+      // 将共用的 PeerConnectionFactory 传给 userMedia，供相机采集使用
+      const pcf = this.rtcSource.getPeerConnectionFactory()
+      if (pcf) {
+        this.userMedia.setPeerConnectionFactory(pcf)
+      }
+
       // 发送 init 请求触发 boxrtc 开始 WebRTC 协商
       this.sendInit()
     }
@@ -176,8 +208,8 @@ export class KooPhonePlayer {
       // answer 创建完成，通过信令发送给 boxrtc
       console.info('[KooPhonePlayer] Sending answer')
       const payload: Record<string, Object> = {
-        type: desc.type,
-        sdp: desc.sdp
+        "type": desc.type,
+        "sdp": desc.sdp
       }
       this.signalClient.emitMessage('answer', this.remoteId, payload)
     }
@@ -185,9 +217,9 @@ export class KooPhonePlayer {
     this.rtcSource.onIceCandidate = (candidate: webrtc.RTCIceCandidate) => {
       // 发送本地 ICE candidate（与 H5 _onLocalIceCandidate 格式一致）
       const payload: Record<string, Object> = {
-        label: candidate.sdpMLineIndex ?? 0,
-        id: candidate.sdpMid ?? '',
-        candidate: candidate.candidate
+        "label": candidate.sdpMLineIndex ?? 0,
+        "id": candidate.sdpMid ?? '',
+        "candidate": candidate.candidate
       }
       this.signalClient.emitMessage('candidate', this.remoteId, payload)
     }
@@ -208,11 +240,25 @@ export class KooPhonePlayer {
     }
 
     // DataChannel 就绪后将 sendInputData 绑定给 InputController
+    // 同时注册 onDcMessage，接收云端下行控制消息（camera_state 等）
     this.rtcSource.onInputChannelOpen = () => {
       console.info('[KooPhonePlayer] Input DataChannel ready, binding InputController')
       this.inputController.setSendFunction((data: ArrayBuffer) => {
         this.rtcSource.sendInputData(data)
       })
+    }
+
+    // 对应 H5 _onInputChannelMessage → _handleExtendMessage
+    // camera_state 由 DataChannel 下行，不走信令
+    this.rtcSource.onDcMessage = (msgType: string, msg: Record<string, Object>) => {
+      if (msgType === 'camera_state') {
+        this.handleCameraState(msg)
+      } else if (msgType === 'app_message') {
+        // app_message 是云端 APP 层透传消息，data 字段是实际内容
+        console.info('[KooPhonePlayer] app_message data:', JSON.stringify(msg['data'] ?? msg))
+      } else {
+        console.info('[KooPhonePlayer] Unhandled DC message type:', msgType)
+      }
     }
   }
 
@@ -232,7 +278,7 @@ export class KooPhonePlayer {
       vcodec: this.vcodec,
       venctype: 0,
       frame_aspect: '16:9',
-      keeping_time: 0,
+      keeping_time: 60,
       user_agent: 'HarmonyOS',
       client_version: 'harmony-sdk-1.0.0',
       uuid: this.uuid,
@@ -278,7 +324,10 @@ export class KooPhonePlayer {
         'sdp length:', sdpPayload.sdp?.length ?? 0)
       const sdp: webrtc.RTCSessionDescription = {
         type: sdpPayload.type as 'offer',
-        sdp: sdpPayload.sdp
+        sdp: sdpPayload.sdp,
+        toJSON: (): webrtc.RTCSessionDescriptionInit => {
+          throw new Error('Function not implemented.')
+        }
       }
       this.rtcSource.setRemoteDescription(sdp)
     } else if (type === 'answer') {
@@ -292,7 +341,10 @@ export class KooPhonePlayer {
       }
       const sdp: webrtc.RTCSessionDescription = {
         type: sdpPayload.type as 'answer',
-        sdp: sdpPayload.sdp
+        sdp: sdpPayload.sdp,
+        toJSON: (): webrtc.RTCSessionDescriptionInit => {
+          throw new Error('Function not implemented.')
+        }
       }
       this.rtcSource.setRemoteDescription(sdp)
     } else if (type === 'candidate') {
@@ -315,7 +367,30 @@ export class KooPhonePlayer {
       // init 回复无需处理，对应 H5 _onInitReply 只打 log
       console.info('[KooPhonePlayer] Received init reply')
     } else {
-      console.info('[KooPhonePlayer] Unhandled message type:', type)
+      console.info('[KooPhonePlayer] Unhandled signal message type:', type)
+    }
+  }
+
+  /**
+   * 处理相机状态控制消息（对应 H5 CloudPlayer._handleCameraState）
+   * 通过 DataChannel 的 WebTextMessage 传来，type='camera_state'
+   */
+  private handleCameraState(raw: Record<string, Object>): void {
+    const cameraId = raw['camera_id'] as number
+    const width = (raw['width'] as number) ?? 640
+    const height = (raw['height'] as number) ?? 480
+    const fps = (raw['fps'] as number) ?? 24
+
+    if (cameraId >= 0) {
+      if (this.userMedia.isCameraOn() || this.userMedia.isCameraOpening()) {
+        console.warn('[KooPhonePlayer] Camera already on/opening, skip open request')
+        return
+      }
+      console.info('[KooPhonePlayer] Opening camera:', cameraId, width, 'x', height, 'fps:', fps)
+      this.userMedia.openCamera(cameraId, width, height, fps)
+    } else {
+      console.info('[KooPhonePlayer] Closing camera')
+      this.userMedia.closeCamera()
     }
   }
 
@@ -344,21 +419,14 @@ export class KooPhonePlayer {
   }
 
   private randomUuid(): string {
-    // 生成 RFC 4122 v4 UUID（对应 H5 Utils.randomUuid()）
-    const hex = '0123456789abcdef'
-    let uuid = ''
-    for (let i = 0; i < 36; i++) {
-      if (i === 8 || i === 13 || i === 18 || i === 23) {
-        uuid += '-'
-      } else if (i === 14) {
-        uuid += '4'
-      } else if (i === 19) {
-        uuid += hex[(Math.random() * 4 | 0) + 8]
-      } else {
-        uuid += hex[Math.random() * 16 | 0]
-      }
-    }
-    return uuid
+    let timestamp = Date.now(); // 鸿蒙支持 Date.now()
+    let uuid = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx';
+
+    return uuid.replace(/[xy]/g, (char: string) => {
+      const random = (timestamp + Math.random() * 16) % 16 | 0;
+      timestamp = Math.floor(timestamp / 16);
+      return (char === 'x' ? random : (random & 0x3 | 0x8)).toString(16);
+    });
   }
 
   private stateChange(newState: KooPhoneState): void {

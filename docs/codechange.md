@@ -1,32 +1,21 @@
 # 代码改动汇总
 
-本文档说明当前 `worry-bit/livekit` 相对最初 `SpikeX-21/livekit` 的模块边界状态，重点回答两个问题：
+本文档说明当前 `worry-bit/livekit` 的最新模块边界，重点区分 `entry` App 与 `LiveKit` SDK。
 
-- `entry` 模块里现在还剩哪些业务改动。
-- `entry` 是否还复制了 `LiveKit` SDK 里的实现文件。
+## 当前结论
 
-## 总体结论
+- `entry` 是 App，负责 Mate X7 折叠屏 UI、KooPhone IAM/实例鉴权、实例池、槽位策略、本机推流按钮策略和业务单测。
+- `LiveKit` 是 SDK，当前已替换为 `SpikeX-21/livekit` 的最新 `upstream/main` 内容，并在 SDK 内补齐 KooPhone 顶层导出和 ArkTS 编译修复。
+- `entry` 不再复制 `LiveKit` SDK 的底层实现，也不再使用 `livekit-harmony/src/main/ets/...` 深路径。
+- `entry` 统一通过 `livekit-harmony` 顶层接口消费 SDK。
 
-当前边界已调整为：
+当前 upstream 基准：
 
-- `entry` 是 App，只保留 Mate X7 UI、KooPhone 鉴权、实例池、槽位策略、LiveKit 推流门面和业务单测。
-- `LiveKit` 是 SDK，源码保持最初拉取状态；本轮没有修改 `LiveKit` 下任何文件。
-- `entry` 不再持有 `LiveKit` SDK 的复制实现，已经删除 `entry/src/main/ets/livekit/**` 和 `entry/src/main/ets/koophone` 下的播放器/信令/RTC/输入控制复制文件。
-- `entry` 通过 `livekit-harmony: file:../LiveKit` 依赖 SDK。KooPhone 相关能力因为 `LiveKit/Index.ets` 当前没有顶层导出，只能暂时使用 `livekit-harmony/src/main/ets/koophone/...` 深路径导入。
-
-验证命令：
-
-```bash
-git diff --name-status e5fb1b5 -- LiveKit
-comm -12 <(find entry/src/main/ets -type f -name '*.ets' -exec basename {} \; | sort) <(find LiveKit/src/main/ets -type f -name '*.ets' -exec basename {} \; | sort)
+```text
+SpikeX-21/livekit upstream/main: bbc34ea5c09bca92ef80e94488e2655e021ae21a
 ```
 
-当前结果：
-
-- `LiveKit` diff 为空。
-- `entry/src/main/ets` 与 `LiveKit/src/main/ets` 下同名 `.ets` 文件扫描为空。
-
-## entry 模块保留内容
+## entry 模块
 
 ### `entry/src/main/ets/pages/Index1.ets`
 
@@ -38,45 +27,34 @@ comm -12 <(find entry/src/main/ets -type f -name '*.ets' -exec basename {} \; | 
 - KooPhone 实例三次重试和实例池切换。
 - 本机摄像头 LiveKit 推流按钮入口。
 
-SDK 依赖方式已改为：
+SDK 导入方式：
 
 ```ts
-import { createKooPhonePlayer, KooPhonePlayer } from 'livekit-harmony/src/main/ets/koophone/KooPhonePlayer'
-import { KooPhoneError, KooPhoneParams, KooPhoneState } from 'livekit-harmony/src/main/ets/koophone/KooPhoneTypes'
-import { KooInputController, TouchAction, TouchPoint } from 'livekit-harmony/src/main/ets/koophone/KooInputController'
+import {
+  KooInputController,
+  TouchAction,
+  TouchPoint,
+  createKooPhonePlayer,
+  KooPhonePlayer,
+  KooPhoneError,
+  KooPhoneParams,
+  KooPhoneState
+} from 'livekit-harmony'
 ```
 
 ### `entry/src/main/ets/koophone/**`
 
-当前只保留 App 业务文件：
+只保留 App 业务编排文件：
 
 | 文件 | 作用 |
 | --- | --- |
-| `KooAuthTypes.ets` | IAM、KooPhone auth、直播平台配置和 SDK token 结果类型；`KooIceServer` 从 SDK 类型导入 |
+| `KooAuthTypes.ets` | IAM、KooPhone auth、直播平台配置和 SDK token 结果类型；`KooIceServer` 从 SDK 顶层导入 |
 | `KooAuthService.ets` | 调 IAM `POST /v3/auth/tokens`，读取响应头 `X-Subject-Token`，再调用 KooPhone auth |
 | `KooAuthParser.ets` | 解析 KooPhone auth 返回的 `signaling_url / device_token / device_id / streamingId` |
 | `KooInstancePool.ets` | 共享实例池选择策略，跳过当前实例、已尝试实例和被另一路占用实例 |
 | `KooLiveSlotPolicy.ets` | 内屏补开面板、外屏默认槽位、外屏切换开关、surface component id 策略 |
 
-已删除的 SDK 复制文件：
-
-| 删除文件 | SDK 对应文件 | 删除原因 |
-| --- | --- | --- |
-| `entry/src/main/ets/koophone/KooPhonePlayer.ets` | `LiveKit/src/main/ets/koophone/KooPhonePlayer.ets` | 播放器属于 SDK 原子能力，`entry` 改为从 SDK 导入 |
-| `entry/src/main/ets/koophone/KooPhoneTypes.ets` | `LiveKit/src/main/ets/koophone/KooPhoneTypes.ets` | SDK 类型不在 App 内重复维护 |
-| `entry/src/main/ets/koophone/KooRTCSource.ets` | `LiveKit/src/main/ets/koophone/KooRTCSource.ets` | WebRTC PeerConnection 和渲染器管理属于 SDK |
-| `entry/src/main/ets/koophone/KooSignalClient.ets` | `LiveKit/src/main/ets/koophone/KooSignalClient.ets` | Socket.IO/WebSocket 信令属于 SDK |
-| `entry/src/main/ets/koophone/KooInputController.ets` | `LiveKit/src/main/ets/koophone/KooInputController.ets` | 云机输入编码属于 SDK |
-
-删除前比对结果：
-
-| 文件 | 差异规模 |
-| --- | --- |
-| `KooPhonePlayer.ets` | 85 行差异，57 行新增，28 行删除 |
-| `KooPhoneTypes.ets` | 50 行差异，49 行新增，1 行删除 |
-| `KooRTCSource.ets` | 80 行差异，63 行新增，17 行删除 |
-| `KooSignalClient.ets` | 107 行差异，88 行新增，19 行删除 |
-| `KooInputController.ets` | 14 行差异，7 行新增，7 行删除 |
+`entry/src/main/ets/koophone` 中没有播放器、信令、RTC、输入控制的 SDK 复制件。
 
 ### `entry/src/main/ets/rtc/LiveKitUtil.ets`
 
@@ -89,7 +67,7 @@ import { KooInputController, TouchAction, TouchPoint } from 'livekit-harmony/src
 - `leaveRoom()`：离开房间并重建客户端。
 - `switchCamera()`：切换前后摄像头。
 
-该文件不再使用 `entry/src/main/ets/livekit/**`，改为直接从 SDK 顶层入口导入：
+SDK 导入方式：
 
 ```ts
 import { AudioLevelInfo, createLiveKitClient, LiveKitClient } from 'livekit-harmony'
@@ -97,58 +75,46 @@ import { AudioLevelInfo, createLiveKitClient, LiveKitClient } from 'livekit-harm
 
 ### `entry/src/main/ets/livekit/**`
 
-该目录已删除。删除文件如下：
+该目录已删除。`entry` 不再维护 `AudioManager / LiveKitClient / RTCEngine / SignalClient / ProtobufCodec / types` 等 SDK 复制实现。
 
-- `AudioManager.ets`
-- `LiveKitClient.ets`
-- `ProtobufCodec.ets`
-- `RTCEngine.ets`
-- `SignalClient.ets`
-- `types.ets`
+## LiveKit SDK 模块
 
-删除原因：
+### 本轮替换
 
-- 这些文件是 `LiveKit/src/main/ets/util/**` 的 SDK 实现复制件。
-- 当前 App 不应在 `entry` 内维护 SDK 底层实现。
-- 业务侧只通过 `LiveKitUtil.ets` 调用 SDK 导出的能力。
+已从 `SpikeX-21/livekit` 拉取 `upstream/main` 并用其 `LiveKit/` 替换当前 SDK 模块。
 
-### `entry/src/main/ets/push/LiveKitPushPolicy.ets`
+upstream 新增的 `LiveKit/src/main/ets/koophone/KooUserMedia.ets` 已纳入当前仓库。
 
-纯业务策略文件，负责：
+### 本轮 SDK 修改
 
-- 判断 `LIVEKIT_SFU_URL / LIVEKIT_SFU_TOKEN` 是否仍是占位符。
-- 生成“开始直播推流 / 关闭直播推流 / 推流中... / 关闭中...”按钮文案。
-- 生成绿色、红色、灰色按钮颜色。
-- 判断所有 KooPhone 直播停止时是否应自动关闭本机摄像头推流。
+按用户提供的 1-11 项修复并补充：
 
-### `entry/src/test/LocalUnit.test.ets`
+| 文件 | 修改内容 |
+| --- | --- |
+| `LiveKit/src/main/ets/koophone/KooInputController.ets` | 为 `TouchAction / KeyAction` 对象字面量补显式接口类型，满足 ArkTS 严格检查 |
+| `LiveKit/src/main/ets/koophone/KooPhonePlayer.ets` | 补 `setupUserMediaHandlers()` 的 camera track 通知结构、answer/candidate payload 显式字段、`keeping_time=60`、SDP `toJSON()`、UUID 生成逻辑 |
+| `LiveKit/src/main/ets/koophone/KooRTCSource.ets` | DataChannel message 类型改为 `string \| ArrayBuffer`，offer/answer 补 `toJSON()` |
+| `LiveKit/src/main/ets/koophone/KooSignalClient.ets` | 增加 `StartPayload` 接口，`emitStart()` 使用显式类型 |
+| `LiveKit/Index.ets` | 顶层导出 KooPhonePlayer、状态、错误、参数、输入控制和 KooUserMedia |
+| `LiveKit/src/main/ets/util/RTCEngine.ets` | 去掉当前 `@ohos/webrtc` 类型不存在的 `VideoSource.release()` 调用 |
+| `LiveKit/src/main/ets/koophone/KooUserMedia.ets` | 去掉当前 `@ohos/webrtc` 类型不存在的 `VideoSource.release()` 调用 |
 
-业务策略测试保留在 `entry`：
+`VideoSource.release()` 是编译时发现的额外问题。如果保留该调用，`entry:test` 和 `assembleApp` 都会失败；当前做法是停止 video track 后清空 `VideoSource` 引用。
 
-- KooPhone auth 返回体解析。
-- 共享实例池选择。
-- 内屏补开面板与外屏槽位策略。
-- 外屏切换开关关闭时不显示按钮。
-- KooPhone surface component id revision。
-- LiveKit 推流按钮文案、颜色、占位符判断和关闭策略。
+### SDK 顶层导出
 
-## LiveKit 模块状态
+`LiveKit/Index.ets` 现在导出：
 
-`LiveKit` 现在保持最初拉取状态。当前工作区验证：
-
-```bash
-git diff --name-status e5fb1b5 -- LiveKit
+```ts
+export { createKooPhonePlayer, KooPhonePlayer } from './src/main/ets/koophone/KooPhonePlayer'
+export { KooPhoneState, KooPhoneError } from './src/main/ets/koophone/KooPhoneTypes'
+export type { KooPhoneParams, KooIceServer } from './src/main/ets/koophone/KooPhoneTypes'
+export { KooInputController, TouchAction, KeyAction, createKooInputController } from './src/main/ets/koophone/KooInputController'
+export type { TouchPoint, SendDataFn } from './src/main/ets/koophone/KooInputController'
+export { KooUserMedia, createKooUserMedia } from './src/main/ets/koophone/KooUserMedia'
 ```
 
-无输出。
-
-说明：
-
-- 本轮没有把业务鉴权、实例池、折叠屏 UI、推流按钮策略写入 SDK。
-- 本轮没有修改 `LiveKit/Index.ets`。
-- 因为 `LiveKit/Index.ets` 当前只导出 LiveKit 音视频相关 util，不导出 KooPhone 播放器，所以 `entry` 对 KooPhone 暂时使用深路径导入。后续 SDK 负责人如果允许，可以只在 `LiveKit/Index.ets` 增加 KooPhone 导出，`entry` 再切回顶层导入。
-
-## 当前构建状态
+## 验证结果
 
 已通过：
 
@@ -156,23 +122,23 @@ git diff --name-status e5fb1b5 -- LiveKit
 /Applications/DevEco-CommandLineTools/6.1.1.280/command-line-tools/bin/ohpm install
 git diff --check
 /Applications/DevEco-CommandLineTools/6.1.1.280/command-line-tools/bin/hvigorw test --no-daemon --stacktrace -p properties.enableSignTask=false
-```
-
-完整 HAP 构建当前失败：
-
-```bash
 /Applications/DevEco-CommandLineTools/6.1.1.280/command-line-tools/bin/hvigorw clean assembleApp --no-daemon --stacktrace -p properties.enableSignTask=false
 ```
 
-失败原因不是 `entry` 复制件残留，而是 `entry` 改为真正依赖 `LiveKit` 后，`LiveKit` 原始源码被 ArkTS 编译器检查到以下 SDK 侧错误：
+HAP 输出：
 
-- `LiveKit/src/main/ets/koophone/KooInputController.ets`：对象字面量未声明接口。
-- `LiveKit/src/main/ets/koophone/KooSignalClient.ets`：对象字面量未声明接口。
-- `LiveKit/src/main/ets/koophone/KooPhonePlayer.ets`：对象字面量、索引访问、`RTCSessionDescription` 类型不匹配。
-- `LiveKit/src/main/ets/koophone/KooRTCSource.ets`：`RTCSessionDescription` 类型不匹配。
-- `LiveKit/src/main/ets/util/RTCEngine.ets`：`VideoSource.release()` 在当前 WebRTC 类型中不存在。
+```text
+entry/build/default/outputs/default/app/entry-default.hap
+entry/build/default/outputs/default/entry-default-unsigned.hap
+```
 
-这个问题的本质是：当前 `LiveKit` 初始 SDK 源码不是完整可编译的 ArkTS SDK 状态。要同时满足“`entry` 不复制 SDK 实现”和“完整 HAP 可构建”，SDK 侧需要修复这些 ArkTS 编译错误，或提供一个已经编译通过的 HAR/HSP 版本。
+运行检查：
+
+```bash
+/Applications/DevEco-CommandLineTools/6.1.1.280/command-line-tools/sdk/default/openharmony/toolchains/hdc list targets
+```
+
+结果为 `[Empty]`，当前没有可安装运行的真机或模拟器目标，所以本轮未能实际安装启动 App。
 
 ## 敏感信息处理
 

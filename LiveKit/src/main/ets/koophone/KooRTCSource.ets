@@ -11,6 +11,7 @@ export class KooRTCSource {
 
   // DataChannel — input channel for sending control events to cloud
   private inputChannel: webrtc.RTCDataChannel | null = null
+  private localVideoSender: webrtc.RTCRtpSender | null = null
 
   // 事件回调
   onDescription: ((desc: webrtc.RTCSessionDescription) => void) | null = null
@@ -18,6 +19,8 @@ export class KooRTCSource {
   onConnectionStateChange: ((state: webrtc.RTCPeerConnectionState) => void) | null = null
   onTrack: ((track: webrtc.MediaStreamTrack) => void) | null = null
   onInputChannelOpen: (() => void) | null = null
+  // DataChannel 下行控制消息回调（对应 H5 _handleExtendMessage）
+  onDcMessage: ((type: string, data: Record<string, Object>) => void) | null = null
 
   /**
    * 创建 PeerConnectionFactory 和 RTCPeerConnection
@@ -59,6 +62,13 @@ export class KooRTCSource {
     this.localRenderer = new webrtc.NativeVideoRenderer()
 
     console.info('[KooRTCSource] PeerConnection created')
+  }
+
+  /**
+   * 获取内部 PeerConnectionFactory（供 KooUserMedia 共用）
+   */
+  getPeerConnectionFactory(): webrtc.PeerConnectionFactory | null {
+    return this.pcf
   }
 
   /**
@@ -115,6 +125,48 @@ export class KooRTCSource {
   }
 
   /**
+   * 添加或替换本地摄像头视频轨道（对应 H5 RTCSource.addLocalStream）
+   * 若已有 sender 则 replaceTrack，否则 addTrack，然后重协商
+   */
+  async addLocalVideoTrack(track: webrtc.MediaStreamTrack): Promise<void> {
+    if (!this.pc) {
+      console.error('[KooRTCSource] addLocalVideoTrack: pc is null')
+      return
+    }
+    try {
+      if (this.localVideoSender) {
+        // replaceTrack — 无需重新协商（与 H5 replaceTrack 一致）
+        await this.localVideoSender.replaceTrack(track)
+        console.info('[KooRTCSource] Local video track replaced')
+      } else {
+        this.localVideoSender = this.pc.addTrack(track)
+        console.info('[KooRTCSource] Local video track added')
+        // 触发重协商 offer（对应 H5 RTCSource._createOffer("video")）
+        await this.createOffer()
+      }
+    } catch (e) {
+      console.error('[KooRTCSource] addLocalVideoTrack failed:', String(e))
+    }
+  }
+
+  /**
+   * 移除本地视频轨道（对应 H5 RTCSource.cameraOff）
+   */
+  async removeLocalVideoTrack(): Promise<void> {
+    if (!this.pc || !this.localVideoSender) {
+      return
+    }
+    try {
+      this.pc.removeTrack(this.localVideoSender)
+      this.localVideoSender = null
+      console.info('[KooRTCSource] Local video track removed')
+      await this.createOffer()
+    } catch (e) {
+      console.error('[KooRTCSource] removeLocalVideoTrack failed:', String(e))
+    }
+  }
+
+  /**
    * 通过 input DataChannel 发送二进制输入事件
    */
   sendInputData(data: ArrayBuffer): void {
@@ -143,6 +195,8 @@ export class KooRTCSource {
       this.inputChannel.close()
       this.inputChannel = null
     }
+
+    this.localVideoSender = null
 
     if (this.pc) {
       this.pc.close()
@@ -233,6 +287,61 @@ export class KooRTCSource {
     channel.onerror = (event: webrtc.RTCErrorEvent) => {
       console.error('[KooRTCSource] DataChannel error:', event?.error?.message ?? 'unknown')
     }
+    // 对应 H5 _onInputChannelMessage()：解析云端下行控制消息
+    channel.onmessage = (event: webrtc.MessageEvent<string | ArrayBuffer>) => {
+      this.handleDcMessage(event.data)
+    }
+  }
+
+  /**
+   * 解析 DataChannel 下行消息帧（对应 H5 _onInputChannelMessage）
+   * 帧格式：4B length(big-endian) + 1B type + nB json
+   * type=211(WEB_TEXT_MESSAGE) 时提取 JSON 并触发 onDcMessage
+   */
+  private handleDcMessage(data: string | ArrayBuffer): void {
+    if (!(data instanceof ArrayBuffer)) {
+      return
+    }
+    try {
+      const view = new DataView(data)
+      if (data.byteLength < 5) {
+        return
+      }
+      const type = view.getUint8(4)
+      // WEB_TEXT_MESSAGE = 211
+      if (type !== 211) {
+        return
+      }
+      const jsonBytes = new Uint8Array(data, 5)
+      const jsonStr = String.fromCharCode(...jsonBytes)
+      const msg = JSON.parse(jsonStr) as Record<string, Object>
+      const msgType = msg['type'] as string
+      console.info('[KooRTCSource] DC message type:', msgType)
+      this.onDcMessage?.(msgType, msg)
+    } catch (e) {
+      console.error('[KooRTCSource] handleDcMessage parse error:', String(e))
+    }
+  }
+
+  private async createOffer(): Promise<void> {
+    if (!this.pc) {
+      return
+    }
+    try {
+      const offerInit = await this.pc.createOffer()
+      await this.pc.setLocalDescription(offerInit)
+      console.info('[KooRTCSource] Renegotiation offer created')
+      const offer: webrtc.RTCSessionDescription = {
+        type: offerInit.type as 'offer',
+        sdp: offerInit.sdp ?? '',
+        toJSON: (): webrtc.RTCSessionDescriptionInit => {
+          throw new Error('Function not implemented.')
+        }
+      }
+      this.onDescription?.(offer)
+    } catch (e) {
+      console.error('[KooRTCSource] createOffer failed:', String(e))
+    }
   }
 
   private async createAnswer(): Promise<void> {
@@ -249,7 +358,10 @@ export class KooRTCSource {
       // 构造完整的 RTCSessionDescription 传给回调
       const answer: webrtc.RTCSessionDescription = {
         type: answerInit.type as 'answer',
-        sdp: answerInit.sdp ?? ''
+        sdp: answerInit.sdp ?? '',
+        toJSON: (): webrtc.RTCSessionDescriptionInit => {
+          throw new Error('Function not implemented.')
+        }
       }
       this.onDescription?.(answer)
     } catch (e) {

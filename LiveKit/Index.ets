@@ -40,3 +40,39 @@ export { SignalClient } from './src/main/ets/util/SignalClient'
 export { RTCEngine } from './src/main/ets/util/RTCEngine'
 
 export type { RTCEngineDelegate } from './src/main/ets/util/RTCEngine'
+
+// KooPhone 云手机串流客户端
+export { createKooPhonePlayer, KooPhonePlayer } from './src/main/ets/koophone/KooPhonePlayer'
+
+export {
+  KooPhoneState,
+  KooPhoneError
+} from './src/main/ets/koophone/KooPhoneTypes'
+
+export type {
+  KooPhoneParams,
+  KooIceServer,
+  KooSignalMessage,
+  KooAuthorizePayload,
+  KooStartPayload,
+  OnStateChange,
+  OnTrack,
+  OnError
+} from './src/main/ets/koophone/KooPhoneTypes'
+
+export {
+  KooInputController,
+  TouchAction,
+  KeyAction,
+  createKooInputController
+} from './src/main/ets/koophone/KooInputController'
+
+export type { TouchPoint, SendDataFn } from './src/main/ets/koophone/KooInputController'
+
+export { KooUserMedia, createKooUserMedia } from './src/main/ets/koophone/KooUserMedia'
+
+export type {
+  CameraStateEvent,
+  UserMediaSuccessCallback,
+  UserMediaErrorCallback
+} from './src/main/ets/koophone/KooUserMedia'

@@ -15,13 +15,24 @@ const KEY_TYPE_TEXT_MSG: number = 211
 
 // ==================== Action 枚举（与 H5 Action 对应） ====================
 
-export const TouchAction = {
+interface GeneratedObjectLiteralInterface_1 {
+  DOWN: number;
+  UP: number;
+  MOVE: number;
+}
+
+export const TouchAction: GeneratedObjectLiteralInterface_1 = {
   DOWN: 0,
   UP: 1,
   MOVE: 2
 }
 
-export const KeyAction = {
+interface GeneratedObjectLiteralInterface_2 {
+  DOWN: number;
+  UP: number;
+}
+
+export const KeyAction: GeneratedObjectLiteralInterface_2 = {
   DOWN: 0,
   UP: 1
 }

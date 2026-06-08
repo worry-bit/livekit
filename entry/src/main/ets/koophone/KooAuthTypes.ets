@@ -1,6 +1,6 @@
-import { KooIceServer } from 'livekit-harmony/src/main/ets/koophone/KooPhoneTypes'
+import { KooIceServer } from 'livekit-harmony'
 
-export type { KooIceServer } from 'livekit-harmony/src/main/ets/koophone/KooPhoneTypes'
+export type { KooIceServer } from 'livekit-harmony'
 
 // IAM 用户密码认证配置。真实账号密码只允许本地替换，不应提交到 git。
 export interface IamPasswordConfig {
