@@ -1,7 +1,6 @@
 import liveKitUtil from '../rtc/LiveKitUtil'
 import { createKooAuthService, KooAuthService } from '../koophone/KooAuthService'
 import { KooAuthTokenResult, LivePlatformConfig } from '../koophone/KooAuthTypes'
-import { KooInputController, TouchAction, TouchPoint } from '../koophone/KooInputController'
 import { KooInstancePoolEntry, selectNextAvailableKooInstance } from '../koophone/KooInstancePool'
 import {
   buildKooLiveSurfaceComponentId,
@@ -20,8 +19,20 @@ import {
   isLiveKitPushConfigReady,
   shouldStopLiveKitPush
 } from '../push/LiveKitPushPolicy'
-import { createKooPhonePlayer, KooPhonePlayer } from '../koophone/KooPhonePlayer'
-import { KooPhoneError, KooPhoneParams, KooPhoneState } from '../koophone/KooPhoneTypes'
+import {
+  KooInputController,
+  TouchAction,
+  TouchPoint
+} from 'livekit-harmony/src/main/ets/koophone/KooInputController'
+import {
+  createKooPhonePlayer,
+  KooPhonePlayer
+} from 'livekit-harmony/src/main/ets/koophone/KooPhonePlayer'
+import {
+  KooPhoneError,
+  KooPhoneParams,
+  KooPhoneState
+} from 'livekit-harmony/src/main/ets/koophone/KooPhoneTypes'
 
 enum LivePlatform {
   TAOBAO = 'taobao',

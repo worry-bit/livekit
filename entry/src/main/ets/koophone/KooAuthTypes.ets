@@ -1,3 +1,7 @@
+import { KooIceServer } from 'livekit-harmony/src/main/ets/koophone/KooPhoneTypes'
+
+export type { KooIceServer } from 'livekit-harmony/src/main/ets/koophone/KooPhoneTypes'
+
 // IAM 用户密码认证配置。真实账号密码只允许本地替换，不应提交到 git。
 export interface IamPasswordConfig {
   authUrl: string
@@ -12,13 +16,6 @@ export interface KooAuthConfig {
   authUrl: string
   tenantId?: string
   projectId?: string
-}
-
-// KooPhone ICE server 结构，保持与 SDK 的 KooPhoneParams.iceServers 兼容。
-export interface KooIceServer {
-  uri: string
-  usr?: string
-  pwd?: string
 }
 
 // 直播平台配置：IAM/KooPhone auth 每个平台独立；signalingUrl/boxId 由实例鉴权返回。

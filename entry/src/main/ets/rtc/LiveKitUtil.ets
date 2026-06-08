@@ -1,6 +1,5 @@
 import { abilityAccessCtrl, common } from '@kit.AbilityKit'
-import { createLiveKitClient, LiveKitClient } from '../livekit/LiveKitClient'
-import { AudioLevelInfo } from '../livekit/types'
+import { AudioLevelInfo, createLiveKitClient, LiveKitClient } from 'livekit-harmony'
 import { RtcModel, SpeakerModel } from './RtcModel'
 
 /**
@@ -104,15 +103,19 @@ class LiveKitUtil {
 
   /**
    * 用户点击“关闭直播推流”时的同步兜底复位。
-   * 不等待 unpublish/leave 的信令链路，先释放本地摄像头和渲染器并换新 client，
-   * 保证 UI 立即回到可再次点击“开始直播推流”的状态。
+   * entry 不能调用 SDK 私有实现，只能废弃当前 client 并换新 client；
+   * 旧 client 的公开 disconnect 走后台 fire-and-forget，避免阻塞页面按钮状态。
    */
   forceResetForNextPush(): void {
     const staleClient = this.client
     this.clientGeneration++
     this.resetRuntimeState()
     try {
-      staleClient.forceResetForNextPush()
+      staleClient.stopAudioLevelObserver()
+      staleClient.disconnect().catch((error: Error) => {
+        this.errorMessage = String(error)
+        console.error('[LiveKitUtil] background disconnect failed:', error)
+      })
     } catch (error) {
       this.errorMessage = String(error)
       console.error('[LiveKitUtil] force reset failed:', error)
