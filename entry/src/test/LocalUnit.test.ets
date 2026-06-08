@@ -13,6 +13,7 @@ import {
 } from '../main/ets/koophone/KooLiveSlotPolicy';
 import {
   buildLiveKitPreviewComponentId,
+  canClickLiveKitPushButton,
   canToggleLiveKitPush,
   getLiveKitPushButtonColor,
   getLiveKitPushButtonText,
@@ -318,6 +319,11 @@ export default function localUnitTest() {
       expect(canToggleLiveKitPush(false, false)).assertEqual(false);
       expect(canToggleLiveKitPush(true, true)).assertEqual(false);
       expect(canToggleLiveKitPush(true, false)).assertEqual(true);
+    });
+
+    it('keepsPushButtonClickableAfterPreviewReset', 0, () => {
+      expect(canClickLiveKitPushButton(false)).assertEqual(true);
+      expect(canClickLiveKitPushButton(true)).assertEqual(false);
     });
 
     it('changesPreviewComponentIdWhenRevisionIncrements', 0, () => {

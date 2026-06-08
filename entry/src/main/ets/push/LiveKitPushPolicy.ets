@@ -45,6 +45,14 @@ export function canToggleLiveKitPush(isSurfaceReady: boolean, isBusy: boolean): 
 }
 
 /**
+ * 推流按钮是否允许响应点击。关闭推流不依赖 preview surface；开始推流时页面会再做 surface 校验。
+ * 这个策略避免关闭后 XComponent 尚未重新 onLoad 时，按钮长期处于灰色不可点状态。
+ */
+export function canClickLiveKitPushButton(isBusy: boolean): boolean {
+  return !isBusy
+}
+
+/**
  * 本机摄像头预览 XComponent 的稳定业务 id。关闭推流后递增 revision，
  * 让 ArkUI 销毁旧 native surface，避免预览区停留最后一帧。
  */

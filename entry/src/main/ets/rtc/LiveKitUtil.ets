@@ -18,9 +18,10 @@ class LiveKitUtil {
 
   private client: LiveKitClient = createLiveKitClient()
   private context: common.UIAbilityContext = getContext(this) as common.UIAbilityContext
+  private clientGeneration: number = 0
 
   constructor() {
-    this.setupEventHandlers(this.client)
+    this.setupEventHandlers(this.client, this.clientGeneration)
   }
 
   /**
@@ -90,6 +91,15 @@ class LiveKitUtil {
       this.recreateClientForNextPush()
     }
     return success
+  }
+
+  /**
+   * 关闭直播推流的兜底入口。先立即切换到新 client 并重置页面状态，
+   * 再限时关闭旧 client，避免 native 释放或信令断开卡住 UI 按钮。
+   */
+  async closeAndResetForNextPush(timeoutMs: number): Promise<boolean> {
+    const staleClient = this.detachCurrentClientForNextPush()
+    return this.closeDetachedClientWithTimeout(staleClient, timeoutMs)
   }
 
   /**
@@ -221,14 +231,66 @@ class LiveKitUtil {
   private recreateClientForNextPush(): void {
     this.client.stopAudioLevelObserver()
     this.client = createLiveKitClient()
-    this.setupEventHandlers(this.client)
+    this.clientGeneration++
+    this.setupEventHandlers(this.client, this.clientGeneration)
+  }
+
+  private detachCurrentClientForNextPush(): LiveKitClient {
+    const staleClient = this.client
+    staleClient.stopAudioLevelObserver()
+    this.resetRuntimeState()
+    this.client = createLiveKitClient()
+    this.clientGeneration++
+    this.setupEventHandlers(this.client, this.clientGeneration)
+    return staleClient
+  }
+
+  private async closeDetachedClientWithTimeout(client: LiveKitClient, timeoutMs: number): Promise<boolean> {
+    return new Promise<boolean>((resolve) => {
+      let settled = false
+      const timeout = setTimeout(() => {
+        if (settled) {
+          return
+        }
+        settled = true
+        this.errorMessage = '关闭直播推流超时，已重置状态，可重新开始推流'
+        console.warn('[LiveKitUtil] close detached client timed out')
+        resolve(false)
+      }, timeoutMs) as number
+
+      setTimeout(() => {
+        this.closeDetachedClient(client).then((success: boolean) => {
+          if (settled) {
+            return
+          }
+          settled = true
+          clearTimeout(timeout)
+          resolve(success)
+        })
+      }, 60)
+    })
+  }
+
+  private async closeDetachedClient(client: LiveKitClient): Promise<boolean> {
+    try {
+      await client.unpublishVideo()
+      await client.disconnect()
+      return true
+    } catch (error) {
+      this.errorMessage = String(error)
+      console.error('[LiveKitUtil] close detached client failed:', error)
+      return false
+    }
   }
 
   /**
    * 设置 LiveKit SDK 事件处理器，把底层连接状态同步给页面可读字段。
    */
-  private setupEventHandlers(client: LiveKitClient): void {
+  private setupEventHandlers(client: LiveKitClient, generation: number): void {
     client.on('connected', () => {
+      if (!this.isCurrentClientGeneration(generation)) {
+        return
+      }
       this.roomState = 'connected'
       console.info('[LiveKitUtil] 已连接到房间')
 
@@ -253,6 +315,9 @@ class LiveKitUtil {
     })
 
     client.on('disconnected', (data: ESObject) => {
+      if (!this.isCurrentClientGeneration(generation)) {
+        return
+      }
       this.roomState = 'disconnected'
       this.isVideoPublished = false
       this.localVideoSurfaceId = ''
@@ -264,27 +329,46 @@ class LiveKitUtil {
     })
 
     client.on('reconnecting', () => {
+      if (!this.isCurrentClientGeneration(generation)) {
+        return
+      }
       this.roomState = 'reconnecting'
       console.info('[LiveKitUtil] 正在重连...')
     })
 
     client.on('participantConnected', (data: RtcModel) => {
+      if (!this.isCurrentClientGeneration(generation)) {
+        return
+      }
       console.info('[LiveKitUtil] 参与者加入:', data.participant.identity)
       this.participantCount++
     })
 
     client.on('participantDisconnected', (data: RtcModel) => {
+      if (!this.isCurrentClientGeneration(generation)) {
+        return
+      }
       console.info('[LiveKitUtil] 参与者离开:', data.participant.identity)
       this.participantCount--
     })
 
     client.on('trackSubscribed', () => {
+      if (!this.isCurrentClientGeneration(generation)) {
+        return
+      }
       console.info('[LiveKitUtil] 收到远程音频轨道')
     })
 
     client.on('activeSpeakersChanged', (data: SpeakerModel) => {
+      if (!this.isCurrentClientGeneration(generation)) {
+        return
+      }
       this.remoteSpeakers = data.speakers.map(s => s.sid)
     })
+  }
+
+  private isCurrentClientGeneration(generation: number): boolean {
+    return generation === this.clientGeneration
   }
 }
 

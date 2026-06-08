@@ -14,7 +14,7 @@ import {
 } from '../koophone/KooLiveSlotPolicy'
 import {
   buildLiveKitPreviewComponentId,
-  canToggleLiveKitPush,
+  canClickLiveKitPushButton,
   getLiveKitPushButtonColor,
   getLiveKitPushButtonText,
   isLiveKitPushConfigReady,
@@ -87,6 +87,7 @@ const LIVEKIT_SFU_TOKEN = '__LIVEKIT_SFU_TOKEN__'
 const LIVEKIT_PREVIEW_COMPONENT_ID = 'livekit-local-camera-preview'
 const LIVEKIT_PANEL_BACKGROUND = '#66000000'
 const LIVEKIT_SWITCH_CAMERA = '#2F6FEB'
+const LIVEKIT_CLOSE_TIMEOUT_MS = 1200
 
 @Entry
 @Component
@@ -359,7 +360,7 @@ struct Index1 {
    * 全局推流按钮入口：未推流时执行权限、SFU 建连、发布视频；已推流时执行关闭链路。
    */
   private async toggleLiveKitPush(): Promise<void> {
-    if (!canToggleLiveKitPush(this.liveKitPreviewReady && this.liveKitSurfaceId.length > 0, this.liveKitBusy)) {
+    if (!canClickLiveKitPushButton(this.liveKitBusy)) {
       return
     }
 
@@ -376,6 +377,8 @@ struct Index1 {
    * 不能复用淘宝/抖音云机画面的 surface。
    */
   private async startLiveKitPush(): Promise<void> {
+    this.refreshLiveKitPreviewSurfaceId()
+
     if (!this.hasAnyPlatformLiveActive()) {
       this.liveKitErrorText = '请先打开淘宝或抖音云机直播'
       return
@@ -409,8 +412,7 @@ struct Index1 {
       const published = await liveKitUtil.publishVideo(this.liveKitSurfaceId)
       if (!published) {
         this.liveKitErrorText = liveKitUtil.errorMessage
-        await liveKitUtil.unpublishVideo()
-        await liveKitUtil.leaveRoom()
+        await liveKitUtil.closeAndResetForNextPush(LIVEKIT_CLOSE_TIMEOUT_MS)
         this.resetLiveKitPreviewSurface()
         return
       }
@@ -418,8 +420,7 @@ struct Index1 {
       this.liveKitPushing = true
     } catch (error) {
       this.liveKitErrorText = String(error)
-      await liveKitUtil.unpublishVideo()
-      await liveKitUtil.leaveRoom()
+      await liveKitUtil.closeAndResetForNextPush(LIVEKIT_CLOSE_TIMEOUT_MS)
       this.resetLiveKitPreviewSurface()
       this.liveKitPushing = false
     } finally {
@@ -437,19 +438,18 @@ struct Index1 {
 
     this.liveKitBusy = true
     this.liveKitErrorText = ''
-    try {
-      const unpublished = await liveKitUtil.unpublishVideo()
-      const left = await liveKitUtil.leaveRoom()
-      if (!unpublished || !left) {
+    const closeTask = liveKitUtil.closeAndResetForNextPush(LIVEKIT_CLOSE_TIMEOUT_MS)
+    this.liveKitPushing = false
+    this.liveKitBusy = false
+    this.resetLiveKitPreviewSurface()
+
+    closeTask.then((closed: boolean) => {
+      if (!closed && this.liveKitErrorText.length === 0) {
         this.liveKitErrorText = liveKitUtil.errorMessage
       }
-    } catch (error) {
+    }).catch((error: Error) => {
       this.liveKitErrorText = String(error)
-    } finally {
-      this.liveKitPushing = false
-      this.liveKitBusy = false
-      this.resetLiveKitPreviewSurface()
-    }
+    })
   }
 
   /**
@@ -461,6 +461,25 @@ struct Index1 {
     this.liveKitSurfaceId = ''
     this.liveKitXCtrl = new XComponentController()
     this.liveKitPreviewRevision++
+    setTimeout(() => {
+      this.refreshLiveKitPreviewSurfaceId()
+    }, 80)
+  }
+
+  /**
+   * 尝试从当前本机预览 XComponent 重新读取 surfaceId。
+   * 关闭推流后 ArkUI 的 onLoad 可能晚于按钮状态恢复，主动刷新可以减少“预览已在但按钮仍灰”的窗口。
+   */
+  private refreshLiveKitPreviewSurfaceId(): void {
+    try {
+      const surfaceId = this.liveKitXCtrl.getXComponentSurfaceId()
+      if (surfaceId.length > 0) {
+        this.liveKitSurfaceId = surfaceId
+        this.liveKitPreviewReady = true
+      }
+    } catch (error) {
+      console.warn('[Index1] LiveKit preview surface refresh skipped:', String(error))
+    }
   }
 
   /**
@@ -1624,7 +1643,7 @@ struct Index1 {
     .justifyContent(FlexAlign.Center)
     .borderRadius(15)
     .backgroundColor(getLiveKitPushButtonColor(this.liveKitPushing, this.liveKitBusy))
-    .opacity(canToggleLiveKitPush(this.liveKitPreviewReady && this.liveKitSurfaceId.length > 0, this.liveKitBusy) ? 1 : 0.58)
+    .opacity(canClickLiveKitPushButton(this.liveKitBusy) ? 1 : 0.58)
     .onClick(() => {
       this.toggleLiveKitPush()
     })
