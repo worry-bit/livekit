@@ -1265,11 +1265,12 @@ struct Index1 {
   }
 
   /**
-   * 直播画面触摸转发入口。只有 WebRTC 已进入 PLAYING 后才发送触摸数据，
-   * 防止连接阶段把无效输入发给云手机。
+   * 直播画面触摸转发入口。Native XComponent(SURFACE) 本身不稳定触发 ArkUI onTouch，
+   * 页面改由同尺寸触摸代理层接收事件；只要该平台仍处于本次开流态就尝试发送。
+   * DataChannel 未就绪时 SDK 的 inputController 会自行丢弃，避免阻塞页面交互。
    */
   private handleSurfaceTouch(platform: LivePlatform, event: TouchEvent): void {
-    if (!this.isPlatformPlaying(platform)) {
+    if (!this.isPlatformLiveActive(platform)) {
       return
     }
 
@@ -1540,9 +1541,6 @@ struct Index1 {
       .onAreaChange((_old: Area, newArea: Area) => {
         this.taobaoPlayer.inputController.setViewSize(newArea.width as number, newArea.height as number)
       })
-      .onTouch((event: TouchEvent) => {
-        this.handleSurfaceTouch(LivePlatform.TAOBAO, event)
-      })
   }
 
   /**
@@ -1572,9 +1570,6 @@ struct Index1 {
     .onAreaChange((_old: Area, newArea: Area) => {
       this.douyinPlayer.inputController.setViewSize(newArea.width as number, newArea.height as number)
     })
-    .onTouch((event: TouchEvent) => {
-      this.handleSurfaceTouch(LivePlatform.DOUYIN, event)
-    })
   }
 
   /**
@@ -1595,6 +1590,18 @@ struct Index1 {
 
   private getLiveKitPreviewHeight(): number {
     return this.isExpandedScreen() ? 130 : 108
+  }
+
+  private getLiveKitPushOverlayWidth(): number {
+    return this.getLiveKitPreviewWidth() + 8 + 206 + 14
+  }
+
+  private getLiveKitPushOverlayX(): number {
+    const width = this.getLiveKitPushOverlayWidth()
+    if (this.rootWidth <= width) {
+      return 0
+    }
+    return (this.rootWidth - width) / 2
   }
 
   private getLiveKitPushButtonWidth(): number {
@@ -1697,35 +1704,32 @@ struct Index1 {
    */
   @Builder
   liveKitPushOverlay() {
-    Row() {
-      Blank()
-      Row({ space: 8 }) {
-        this.liveKitPreviewSurface()
+    Row({ space: 8 }) {
+      this.liveKitPreviewSurface()
 
-        Column({ space: 6 }) {
-          Row({ space: 6 }) {
-            this.liveKitPushButton()
-            this.liveKitSwitchCameraButton()
-          }
-
-          if (this.liveKitErrorText.length > 0) {
-            Text(this.liveKitErrorText)
-              .fontSize(9)
-              .fontColor('#FFD3D3')
-              .maxLines(2)
-              .width(206)
-          }
+      Column({ space: 6 }) {
+        Row({ space: 6 }) {
+          this.liveKitPushButton()
+          this.liveKitSwitchCameraButton()
         }
-        .justifyContent(FlexAlign.Center)
+
+        if (this.liveKitErrorText.length > 0) {
+          Text(this.liveKitErrorText)
+            .fontSize(9)
+            .fontColor('#FFD3D3')
+            .maxLines(2)
+            .width(206)
+        }
       }
-      .padding({ top: 6, right: 8, bottom: 6, left: 6 })
-      .backgroundColor(LIVEKIT_PANEL_BACKGROUND)
-      .borderRadius(8)
-      Blank()
+      .width(206)
+      .justifyContent(FlexAlign.Center)
     }
-    .width('100%')
+    .width(this.getLiveKitPushOverlayWidth())
     .height(this.getLiveKitPreviewHeight() + 16)
-    .position({ x: 0, y: 8 })
+    .padding({ top: 6, right: 8, bottom: 6, left: 6 })
+    .backgroundColor(LIVEKIT_PANEL_BACKGROUND)
+    .borderRadius(8)
+    .position({ x: this.getLiveKitPushOverlayX(), y: 8 })
     .zIndex(60)
   }
 
@@ -1738,6 +1742,24 @@ struct Index1 {
 
   private getLiveSlotWidth(): string {
     return this.isExpandedScreen() ? '50%' : '100%'
+  }
+
+  private getLiveSlotWidthValue(): number {
+    if (this.rootWidth <= 0) {
+      return 0
+    }
+    return this.isExpandedScreen() ? this.rootWidth / 2 : this.rootWidth
+  }
+
+  private getPlatformControlRightX(platform: LivePlatform, controlWidth: number, rightOffset: number): number {
+    const slotRight = this.getLiveSlotX(platform) + this.getLiveSlotWidthValue()
+    const x = slotRight - controlWidth - rightOffset
+    return x > 0 ? x : 0
+  }
+
+  private getPlatformControlBottomY(controlHeight: number, bottomOffset: number): number {
+    const y = this.rootHeight - controlHeight - bottomOffset
+    return y > 0 ? y : 0
   }
 
   private isFoldedAddPanelVisible(): boolean {
@@ -1794,10 +1816,10 @@ struct Index1 {
       }
     }
     .padding({ top: 3, right: 6, bottom: 3, left: 6 })
-    .margin({ top: 6, left: 6 })
     .borderRadius(4)
     .backgroundColor(OVERLAY_BACKGROUND)
     .zIndex(30)
+    .position({ x: this.getLiveSlotX(platform) + 6, y: 6 })
     .hitTestBehavior(HitTestMode.None)
   }
 
@@ -1806,7 +1828,7 @@ struct Index1 {
    * 不改变展开屏左淘宝、右抖音的固定槽位布局。
    */
   @Builder
-  foldedSwitchButton() {
+  foldedSwitchButton(platform: LivePlatform) {
     Row() {
       Text('切换直播')
         .fontSize(10)
@@ -1819,7 +1841,7 @@ struct Index1 {
     .justifyContent(FlexAlign.Center)
     .borderRadius(14)
     .backgroundColor(FOLDED_SWITCH_GREEN)
-    .margin({ top: 6, right: 6 })
+    .position({ x: this.getPlatformControlRightX(platform, 66, 6), y: 6 })
     .zIndex(35)
     .onClick(() => {
       this.toggleFoldedVisiblePlatform()
@@ -1843,6 +1865,7 @@ struct Index1 {
     .justifyContent(FlexAlign.Center)
     .borderRadius(14)
     .backgroundColor(LIVE_RED)
+    .position({ x: this.getPlatformControlRightX(platform, 66, 8), y: this.getPlatformControlBottomY(28, 10) })
     .zIndex(35)
     .onClick(() => {
       this.stopPlatformStream(platform)
@@ -1869,44 +1892,44 @@ struct Index1 {
   }
 
   /**
+   * 直播触摸代理层。真机上 Native XComponent(SURFACE) 可以被系统命中，
+   * 但 ArkUI onTouch 不一定回调；因此页面在 surface 上方放一个同尺寸透明层，
+   * 专门接收触摸并转发给 SDK 的 inputController。右下角停止按钮等控件层级更高，
+   * 仍然优先响应自己的点击。
+   */
+  @Builder
+  liveTouchProxyLayer(platform: LivePlatform) {
+    if (this.isSurfaceLayerTouchable(platform)) {
+      Stack() {
+        Text('')
+          .width('100%')
+          .height('100%')
+          .opacity(0)
+      }
+      .width(this.getLiveSlotWidth())
+      .height('100%')
+      .position({ x: this.getLiveSlotX(platform), y: 0 })
+      .zIndex(20)
+      .hitTestBehavior(HitTestMode.Default)
+      .onTouch((event: TouchEvent) => {
+        this.handleSurfaceTouch(platform, event)
+      })
+    }
+  }
+
+  /**
    * 直播控制层。状态浮层、外屏切换按钮、停止按钮都放在 surface 上方，
    * 避免 Native surface 层盖住 ArkUI 控件导致外屏按钮不可见。
    */
   @Builder
   liveControlLayer(platform: LivePlatform, showFoldedSwitch: boolean) {
-    Stack({ alignContent: Alignment.TopStart }) {
-      this.streamStatusOverlay(platform)
+    this.streamStatusOverlay(platform)
 
-      if (showFoldedSwitch) {
-        Row() {
-          Blank()
-          this.foldedSwitchButton()
-        }
-        .width('100%')
-        .zIndex(35)
-        .hitTestBehavior(HitTestMode.Transparent)
-      }
-
-      Column() {
-        Blank()
-        Row() {
-          Blank()
-          this.stopPlatformButton(platform)
-        }
-        .width('100%')
-        .margin({ right: 8, bottom: 10 })
-        .hitTestBehavior(HitTestMode.Transparent)
-      }
-      .width('100%')
-      .height('100%')
-      .zIndex(35)
-      .hitTestBehavior(HitTestMode.Transparent)
+    if (showFoldedSwitch) {
+      this.foldedSwitchButton(platform)
     }
-    .width(this.getLiveSlotWidth())
-    .height('100%')
-    .position({ x: this.getLiveSlotX(platform), y: 0 })
-    .zIndex(30)
-    .hitTestBehavior(HitTestMode.Transparent)
+
+    this.stopPlatformButton(platform)
   }
 
   /**
@@ -1986,6 +2009,8 @@ struct Index1 {
     Stack({ alignContent: Alignment.TopStart }) {
       this.liveSurfaceLayer(LivePlatform.TAOBAO)
       this.liveSurfaceLayer(LivePlatform.DOUYIN)
+      this.liveTouchProxyLayer(LivePlatform.TAOBAO)
+      this.liveTouchProxyLayer(LivePlatform.DOUYIN)
 
       if (this.isExpandedScreen()) {
         this.inactiveLiveSlotLayer(LivePlatform.TAOBAO)
