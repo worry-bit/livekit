@@ -9,10 +9,8 @@
  *     pcf.createVideoSource(constraints) → VideoSource
  *     pcf.createVideoTrack(id, source)   → VideoTrack（MediaStreamTrack 子类）
  *
+ *   facingMode 约束：'user'=前摄, 'environment'=后摄（与 H5 facingMode 一致）
  *   @ohos/webrtc 内部负责相机采集，无需手动操作 Camera Kit。
- *
- *   注意：@ohos/webrtc 1.0.1 在 Mate X7 上透传 facingMode 会触发
- *   OH_CameraDevice_GetCameraOrientation native 崩溃，因此当前只传基础采集约束。
  */
 
 import webrtc from '@ohos/webrtc'
@@ -79,9 +77,16 @@ export class KooUserMedia {
     try {
       await this.stopCamera()
 
-      // facingMode 只保留为业务状态，不透传给 createVideoSource，避免 Mate X7 native 崩溃。
+      // facingMode: 前摄='user', 后摄='environment'（对应 H5 facingMode 约束）
       const facingMode = cameraId === 1 ? 'user' : 'environment'
-      const constraints: webrtc.MediaTrackConstraints = this.buildVideoConstraints(width, height, fps)
+
+      const constraints: webrtc.MediaTrackConstraints = {
+        width: width,
+        height: height,
+        frameRate: fps,
+        facingMode: facingMode
+      }
+
       this.videoSource = this.pcf.createVideoSource(constraints)
 
       // 监听采集启动结果
@@ -101,7 +106,7 @@ export class KooUserMedia {
       this.cameraOn = true
       this.cameraOpening = false
 
-      console.info('[KooUserMedia] Camera started with safe constraints, requested facingMode:', facingMode)
+      console.info('[KooUserMedia] Camera started, facingMode:', facingMode)
       this.onSuccess?.('start', 'video', this.videoTrack)
       return true
     } catch (e) {
@@ -159,23 +164,6 @@ export class KooUserMedia {
     this.cameraId = -1
     this.cameraOpening = false
     console.info('[KooUserMedia] Camera stopped')
-  }
-
-  /**
-   * 构造 @ohos/webrtc 官方示例兼容的视频采集约束。
-   * 不传 facingMode：Mate X7 上这一路会进入 libohcamera orientation 崩溃路径。
-   * frameRate 使用范围对象，贴近 @ohos/webrtc README 中的 createVideoSource 示例。
-   */
-  private buildVideoConstraints(width: number, height: number, fps: number): webrtc.MediaTrackConstraints {
-    const safeFps = Math.max(1, Math.floor(fps))
-    return {
-      width: Math.max(1, Math.floor(width)),
-      height: Math.max(1, Math.floor(height)),
-      frameRate: {
-        min: safeFps,
-        max: Math.max(safeFps, 30)
-      }
-    }
   }
 }
 

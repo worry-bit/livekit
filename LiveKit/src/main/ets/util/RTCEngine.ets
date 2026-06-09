@@ -73,7 +73,7 @@ export class RTCEngine {
   private videoSource: webrtc.VideoSource | null = null
   private videoTrack: webrtc.VideoTrack | null = null
   private localRenderer: webrtc.NativeVideoRenderer | null = null
-  private currentFacingMode: string = 'user'
+  private currentFacingMode: string = 'environment'
 
   constructor(signalClient: SignalClient) {
     this.signalClient = signalClient
@@ -226,8 +226,7 @@ export class RTCEngine {
   /**
    * 发布视频（摄像头采集 + 本地预览）
    * @param surfaceId 来自 XComponent.onLoad 的 surfaceId，用于本地预览渲染
-   * @param options 采集参数，默认 640x480@15fps。当前不向 @ohos/webrtc 透传 facingMode，
-   * 避免 1.0.1 在 Mate X7 上触发 OH_CameraDevice_GetCameraOrientation native 崩溃。
+   * @param options 采集参数，默认 1280x720@30fps 后置摄像头
    */
   async publishVideo(surfaceId: string, options?: VideoCaptureOptions): Promise<void> {
     if (!this.peerConnectionFactory || !this.publisherPC) {
@@ -235,10 +234,10 @@ export class RTCEngine {
     }
 
     try {
-      const width = options?.width ?? 640
-      const height = options?.height ?? 480
-      const frameRate = options?.frameRate ?? 15
-      const facingMode = options?.facingMode ?? 'user'
+      const width = options?.width ?? 1280
+      const height = options?.height ?? 720
+      const frameRate = options?.frameRate ?? 30
+      const facingMode = options?.facingMode ?? 'environment'
       this.currentFacingMode = facingMode
 
       // 1. 通知服务器即将发布视频轨道（TrackType.VIDEO=1, TrackSource.CAMERA=1）
@@ -246,11 +245,15 @@ export class RTCEngine {
       this.signalClient.sendAddTrack(trackId, 'video', 1, 1)
       console.info('[RTCEngine] Sent AddTrackRequest for video:', trackId)
 
-      // 2. 创建 VideoSource。@ohos/webrtc 1.0.1 的 facingMode 约束在 Mate X7 上会触发
-      // OH_CameraDevice_GetCameraOrientation native 崩溃，因此这里仅传基础采集参数。
-      const constraints: webrtc.MediaTrackConstraints = this.buildVideoConstraints(width, height, frameRate)
-      this.videoSource = this.peerConnectionFactory.createVideoSource(constraints)
-      console.info('[RTCEngine] VideoSource created with safe constraints, requested facingMode:', facingMode)
+      // 2. 创建 VideoSource，传入采集约束（含摄像头方向），内部自动开始采集
+      const constraints: webrtc.MediaTrackConstraints = {
+        width: width,
+        height: height,
+        frameRate: frameRate,
+        facingMode: facingMode
+      }
+      this.videoSource = this.peerConnectionFactory.createVideoSource(constraints, false)
+      console.info('[RTCEngine] VideoSource created, capturing started')
 
       // 3. 创建 VideoTrack
       this.videoTrack = this.peerConnectionFactory.createVideoTrack(trackId, this.videoSource)
@@ -318,35 +321,60 @@ export class RTCEngine {
   }
 
   /**
-   * 切换前/后摄像头。
-   *
-   * 当前 @ohos/webrtc 1.0.1 在 Mate X7 上使用 facingMode 重建 VideoSource 会触发
-   * OH_CameraDevice_GetCameraOrientation native 崩溃。SDK 侧在拿到稳定相机选择 API
-   * 之前先禁用该能力，避免应用点击切换摄像头后直接崩溃。
+   * 切换前/后摄像头：重建 VideoSource（新 facingMode）+ replaceTrack
    */
   async switchCamera(): Promise<void> {
     if (!this.publisherPC || !this.peerConnectionFactory || !this.videoTrack) {
       console.warn('[RTCEngine] switchCamera called but video not published')
       return
     }
-    console.warn('[RTCEngine] switchCamera disabled: @ohos/webrtc facingMode crashes on Mate X7')
-  }
 
-  /**
-   * 构造 @ohos/webrtc 官方示例兼容的视频采集约束。
-   * 注意：不要把 facingMode 放进 constraints；Mate X7 上这一路会进入
-   * libohcamera OH_CameraDevice_GetCameraOrientation 崩溃路径。frameRate 使用
-   * README 示例的范围对象，避免底层对单值帧率解析不兼容。
-   */
-  private buildVideoConstraints(width: number, height: number, frameRate: number): webrtc.MediaTrackConstraints {
-    const safeFrameRate = Math.max(1, Math.floor(frameRate))
-    return {
-      width: Math.max(1, Math.floor(width)),
-      height: Math.max(1, Math.floor(height)),
-      frameRate: {
-        min: safeFrameRate,
-        max: Math.max(safeFrameRate, 30)
+    const newFacingMode = this.currentFacingMode === 'environment' ? 'user' : 'environment'
+    const prevVideoSource = this.videoSource
+    const prevVideoTrack = this.videoTrack
+
+    try {
+      // 找到当前视频发送器
+      const senders = this.publisherPC.getSenders()
+      let videoSender: webrtc.RTCRtpSender | null = null
+      for (let i = 0; i < senders.length; i++) {
+        if (senders[i].track && senders[i].track!.kind === 'video') {
+          videoSender = senders[i]
+          break
+        }
       }
+      if (!videoSender) {
+        console.error('[RTCEngine] switchCamera: video sender not found')
+        return
+      }
+
+      // 创建新 VideoSource（新方向）
+      const newVideoSource = this.peerConnectionFactory.createVideoSource(
+        { facingMode: newFacingMode }, false
+      )
+      const newTrackId = `video_${Date.now()}`
+      const newVideoTrack = this.peerConnectionFactory.createVideoTrack(newTrackId, newVideoSource)
+
+      // 替换发送器中的轨道（不触发重新协商）
+      await videoSender.replaceTrack(newVideoTrack)
+
+      // 更新渲染器绑定
+      if (this.localRenderer) {
+        this.localRenderer.setVideoTrack(newVideoTrack)
+      }
+
+      // 更新成员变量
+      this.videoSource = newVideoSource
+      this.videoTrack = newVideoTrack
+      this.currentFacingMode = newFacingMode
+
+      // 释放旧资源
+      prevVideoTrack.stop()
+      prevVideoSource?.release()
+
+      console.info('[RTCEngine] Camera switched to:', newFacingMode)
+    } catch (error) {
+      console.error('[RTCEngine] switchCamera failed:', error)
     }
   }
 
