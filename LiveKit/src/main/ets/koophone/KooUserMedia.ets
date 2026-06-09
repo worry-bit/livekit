@@ -157,6 +157,7 @@ export class KooUserMedia {
       this.videoTrack = null
     }
     if (this.videoSource) {
+      this.videoSource.release()
       this.videoSource = null
     }
     this.cameraOn = false
