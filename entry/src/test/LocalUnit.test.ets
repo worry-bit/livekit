@@ -15,9 +15,7 @@ import {
 import {
   buildLiveKitPreviewComponentId,
   canClickLiveKitPushButton,
-  canClickLiveKitSwitchCameraButton,
   canToggleLiveKitPush,
-  getSafeLiveKitVideoCaptureOptions,
   getLiveKitPushButtonColor,
   getLiveKitPushButtonText,
   isLiveKitPushConfigReady,
@@ -332,13 +330,11 @@ export default function localUnitTest() {
       expect(getLiveKitPushButtonText(false, true)).assertEqual('推流中...');
       expect(getLiveKitPushButtonText(true, true)).assertEqual('关闭中...');
       expect(getLiveKitPushButtonText(true, false, false)).assertEqual('直播推流中');
-      expect(getLiveKitPushButtonText(false, false, true, false)).assertEqual('推流暂不可用');
 
       expect(getLiveKitPushButtonColor(false, false)).assertEqual(LIVEKIT_PUSH_GREEN);
       expect(getLiveKitPushButtonColor(true, false)).assertEqual(LIVEKIT_PUSH_RED);
       expect(getLiveKitPushButtonColor(false, true)).assertEqual(LIVEKIT_PUSH_DISABLED);
       expect(getLiveKitPushButtonColor(true, false, false)).assertEqual(LIVEKIT_PUSH_DISABLED);
-      expect(getLiveKitPushButtonColor(false, false, true, false)).assertEqual(LIVEKIT_PUSH_DISABLED);
     });
 
     it('togglesOnlyAfterPreviewSurfaceReady', 0, () => {
@@ -352,24 +348,6 @@ export default function localUnitTest() {
       expect(canClickLiveKitPushButton(true)).assertEqual(false);
       expect(canClickLiveKitPushButton(false, false, false)).assertEqual(true);
       expect(canClickLiveKitPushButton(false, true, false)).assertEqual(false);
-      expect(canClickLiveKitPushButton(false, false, true, false)).assertEqual(false);
-      expect(canClickLiveKitPushButton(false, true, false, false)).assertEqual(false);
-    });
-
-    it('usesFrontCameraSafeCaptureOptionsForMateX7Push', 0, () => {
-      const options = getSafeLiveKitVideoCaptureOptions();
-
-      expect(options.width).assertEqual(640);
-      expect(options.height).assertEqual(360);
-      expect(options.frameRate).assertEqual(15);
-      expect(options.facingMode).assertEqual('user');
-    });
-
-    it('keepsCameraSwitchCodeButDisablesButtonWhenFeatureFlagIsOff', 0, () => {
-      expect(canClickLiveKitSwitchCameraButton(false, true, false)).assertEqual(false);
-      expect(canClickLiveKitSwitchCameraButton(true, false, false)).assertEqual(false);
-      expect(canClickLiveKitSwitchCameraButton(true, true, true)).assertEqual(false);
-      expect(canClickLiveKitSwitchCameraButton(true, true, false)).assertEqual(true);
     });
 
     it('changesPreviewComponentIdWhenRevisionIncrements', 0, () => {

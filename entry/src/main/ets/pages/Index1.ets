@@ -15,7 +15,6 @@ import {
 import {
   buildLiveKitPreviewComponentId,
   canClickLiveKitPushButton,
-  canClickLiveKitSwitchCameraButton,
   getLiveKitPushButtonColor,
   getLiveKitPushButtonText,
   isLiveKitPushConfigReady,
@@ -96,9 +95,7 @@ const LIVEKIT_SFU_TOKEN = '__LIVEKIT_SFU_TOKEN__'
 const LIVEKIT_PREVIEW_COMPONENT_ID = 'livekit-local-camera-preview'
 const LIVEKIT_PANEL_BACKGROUND = '#66000000'
 const LIVEKIT_SWITCH_CAMERA = '#2F6FEB'
-const ENABLE_LIVEKIT_PUSH_START_BUTTON = false
 const ENABLE_LIVEKIT_PUSH_STOP_BUTTON = false
-const ENABLE_LIVEKIT_CAMERA_SWITCH = false
 
 @Entry
 @Component
@@ -373,11 +370,6 @@ struct Index1 {
    * 全局推流按钮入口：未推流时执行权限、SFU 建连、发布视频；已推流时执行关闭链路。
    */
   private async toggleLiveKitPush(): Promise<void> {
-    if (!this.liveKitPushing && !ENABLE_LIVEKIT_PUSH_START_BUTTON) {
-      this.liveKitErrorText = 'Mate X7 本机摄像头采集会触发 SDK native 崩溃，推流入口已临时关闭'
-      return
-    }
-
     if (!canClickLiveKitPushButton(this.liveKitBusy, this.liveKitPushing, ENABLE_LIVEKIT_PUSH_STOP_BUTTON)) {
       return
     }
@@ -388,43 +380,6 @@ struct Index1 {
     }
 
     await this.startLiveKitPush()
-  }
-
-  /**
-   * 推流入口是否允许点击。当前 Mate X7 上 SDK 摄像头采集 native 路径会闪退，
-   * 因此只在功能开关打开或已经处于推流态时允许走原有链路。
-   */
-  private canUseLiveKitPushControl(): boolean {
-    return canClickLiveKitPushButton(
-      this.liveKitBusy,
-      this.liveKitPushing,
-      ENABLE_LIVEKIT_PUSH_STOP_BUTTON,
-      ENABLE_LIVEKIT_PUSH_START_BUTTON
-    )
-  }
-
-  /**
-   * 推流按钮文案。禁用时保留控件位置，避免误触发 SDK publishVideo。
-   */
-  private getLiveKitPushControlText(): string {
-    return getLiveKitPushButtonText(
-      this.liveKitPushing,
-      this.liveKitBusy,
-      ENABLE_LIVEKIT_PUSH_STOP_BUTTON,
-      ENABLE_LIVEKIT_PUSH_START_BUTTON
-    )
-  }
-
-  /**
-   * 推流按钮颜色。禁用态统一灰色，功能代码保留但不进入崩溃路径。
-   */
-  private getLiveKitPushControlColor(): string {
-    return getLiveKitPushButtonColor(
-      this.liveKitPushing,
-      this.liveKitBusy,
-      ENABLE_LIVEKIT_PUSH_STOP_BUTTON,
-      ENABLE_LIVEKIT_PUSH_START_BUTTON
-    )
   }
 
   /**
@@ -548,10 +503,7 @@ struct Index1 {
    * 切换本机摄像头方向。只影响本机推到 SFU 的摄像头流，不改变云机布局。
    */
   private async switchLiveKitCamera(): Promise<void> {
-    if (!canClickLiveKitSwitchCameraButton(ENABLE_LIVEKIT_CAMERA_SWITCH, this.liveKitPushing, this.liveKitBusy)) {
-      if (!ENABLE_LIVEKIT_CAMERA_SWITCH) {
-        this.liveKitErrorText = 'Mate X7 后摄采集路径暂时禁用，避免点击后闪退'
-      }
+    if (!this.liveKitPushing || this.liveKitBusy) {
       return
     }
 
@@ -1757,7 +1709,7 @@ struct Index1 {
   @Builder
   liveKitPushButton() {
     Row() {
-      Text(this.getLiveKitPushControlText())
+      Text(getLiveKitPushButtonText(this.liveKitPushing, this.liveKitBusy, ENABLE_LIVEKIT_PUSH_STOP_BUTTON))
         .fontSize(10)
         .fontWeight(FontWeight.Medium)
         .fontColor(Color.White)
@@ -1767,8 +1719,8 @@ struct Index1 {
     .height(30)
     .justifyContent(FlexAlign.Center)
     .borderRadius(15)
-    .backgroundColor(this.getLiveKitPushControlColor())
-    .opacity(this.canUseLiveKitPushControl() ? 1 : 0.42)
+    .backgroundColor(getLiveKitPushButtonColor(this.liveKitPushing, this.liveKitBusy, ENABLE_LIVEKIT_PUSH_STOP_BUTTON))
+    .opacity(canClickLiveKitPushButton(this.liveKitBusy, this.liveKitPushing, ENABLE_LIVEKIT_PUSH_STOP_BUTTON) ? 1 : 0.58)
     .onClick(() => {
       this.toggleLiveKitPush()
     })
@@ -1791,7 +1743,7 @@ struct Index1 {
     .justifyContent(FlexAlign.Center)
     .borderRadius(15)
     .backgroundColor(LIVEKIT_SWITCH_CAMERA)
-    .opacity(canClickLiveKitSwitchCameraButton(ENABLE_LIVEKIT_CAMERA_SWITCH, this.liveKitPushing, this.liveKitBusy) ? 1 : 0.36)
+    .opacity(this.liveKitPushing && !this.liveKitBusy ? 1 : 0.48)
     .onClick(() => {
       this.switchLiveKitCamera()
     })
