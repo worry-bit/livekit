@@ -7,6 +7,11 @@ export interface KooLiveAddSlotState {
   isPendingAdd: boolean
 }
 
+export interface KooLiveFailureStopState {
+  shouldStart: boolean
+  isSlotFailed: boolean
+}
+
 /**
  * 判断展开屏未直播半屏是否应展示补开直播选择页。
  * 内屏空半屏可补选；外屏只有“当前可见直播被用户停止且另一侧仍在播”时才展示。
@@ -24,6 +29,14 @@ export function shouldShowKooLiveAddPanel(state: KooLiveAddSlotState): boolean {
  */
 export function canStartKooLiveAddSelection(state: KooLiveAddSlotState): boolean {
   return shouldShowKooLiveAddPanel(state) && state.isPendingAdd
+}
+
+/**
+ * 判断失败态是否仍应展示单路停止按钮。
+ * 失败后 shouldStart 仍表示本次串流流程未被用户退出，必须允许用户手动收尾。
+ */
+export function shouldShowKooLiveFailureStopControl(state: KooLiveFailureStopState): boolean {
+  return state.shouldStart && state.isSlotFailed
 }
 
 /**

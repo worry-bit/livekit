@@ -9,6 +9,7 @@ import {
   isKooLiveAddOptionDisabled,
   resolveKooFoldedVisibleSlot,
   shouldRenderKooFoldedSwitch,
+  shouldShowKooLiveFailureStopControl,
   shouldShowKooLiveAddPanel
 } from '../koophone/KooLiveSlotPolicy'
 import {
@@ -1077,6 +1078,18 @@ struct Index1 {
     return this.shouldStartPlatform(platform) && !this.isPlatformFailed(platform)
   }
 
+  private shouldShowFailureStopControl(platform: LivePlatform): boolean {
+    return shouldShowKooLiveFailureStopControl({
+      shouldStart: this.shouldStartPlatform(platform),
+      isSlotFailed: this.isPlatformFailed(platform)
+    })
+  }
+
+  private shouldRenderFailureControlLayer(platform: LivePlatform): boolean {
+    return this.shouldShowFailureStopControl(platform) &&
+      (this.isExpandedScreen() || this.getFoldedSlotPlatform() === platform)
+  }
+
   private isBothPlatformsLiveActive(): boolean {
     return this.isPlatformLiveActive(LivePlatform.TAOBAO) && this.isPlatformLiveActive(LivePlatform.DOUYIN)
   }
@@ -1102,8 +1115,20 @@ struct Index1 {
     if (this.isPlatformLiveActive(this.foldedVisiblePlatform)) {
       return this.foldedVisiblePlatform
     }
+    if (this.shouldShowFailureStopControl(this.foldedVisiblePlatform)) {
+      return this.foldedVisiblePlatform
+    }
     if (this.isPlatformLiveActive(LivePlatform.TAOBAO)) {
       return LivePlatform.TAOBAO
+    }
+    if (this.shouldShowFailureStopControl(LivePlatform.TAOBAO)) {
+      return LivePlatform.TAOBAO
+    }
+    if (this.isPlatformLiveActive(LivePlatform.DOUYIN)) {
+      return LivePlatform.DOUYIN
+    }
+    if (this.shouldShowFailureStopControl(LivePlatform.DOUYIN)) {
+      return LivePlatform.DOUYIN
     }
     return LivePlatform.DOUYIN
   }
@@ -1130,6 +1155,7 @@ struct Index1 {
    */
   private getFoldedSlotPlatform(): LivePlatform {
     if (this.isPlatformLiveActive(this.foldedVisiblePlatform) ||
+      this.shouldShowFailureStopControl(this.foldedVisiblePlatform) ||
       this.shouldShowAdditionalSelection(this.foldedVisiblePlatform)) {
       return this.foldedVisiblePlatform
     }
@@ -1214,10 +1240,12 @@ struct Index1 {
         this.setRetryTimer(platform, timer)
         return
       }
+      const finalReason = this.buildTerminalFailureMessage(reason)
       this.setPlatformStateText(platform, 'failed')
-      this.setPlatformErrorText(platform, `${reason}; 当前租户共享实例池已耗尽`)
+      this.setPlatformErrorText(platform, finalReason)
       this.ensureFoldedVisiblePlatform()
       this.stopLiveKitPushIfNoActiveKooLive()
+      console.error(`[Index1] ${this.getPlatformTitle(platform)} terminal failure: ${finalReason}`)
       return
     }
 
@@ -1242,6 +1270,29 @@ struct Index1 {
       return 1600
     }
     return 2400
+  }
+
+  private buildTerminalFailureMessage(reason: string): string {
+    return `${reason}; ${this.describeTerminalFailureCause(reason)}; 当前租户共享实例池已耗尽`
+  }
+
+  private describeTerminalFailureCause(reason: string): string {
+    const normalizedReason = reason.toLowerCase()
+    if (normalizedReason.indexOf('iam config') >= 0) {
+      return 'IAM 配置不完整，实际 IAM token 未获取'
+    }
+    if (normalizedReason.indexOf('x-subject-token') >= 0 ||
+      normalizedReason.indexOf('iam response missing') >= 0) {
+      return 'IAM 响应缺少 X-Subject-Token，实际 IAM token 未获取'
+    }
+    if (normalizedReason.indexOf('iam token request failed') >= 0 ||
+      normalizedReason.indexOf('iam token network request failed') >= 0) {
+      return 'IAM token 请求失败，实际 IAM token 未获取'
+    }
+    if (normalizedReason.indexOf('koophone auth') >= 0) {
+      return 'KooPhone 实例鉴权失败，已进入实例鉴权阶段'
+    }
+    return '播放器或信令启动失败，已进入 SDK 开流阶段'
   }
 
   private getPlatformTitle(platform: LivePlatform): string {
@@ -1933,6 +1984,17 @@ struct Index1 {
   }
 
   /**
+   * 失败态控制层。失败面板不是直播态，所以需要单独在顶层 Stack 渲染停止按钮，
+   * 允许用户退出失败会话并回到选择/补开状态。
+   */
+  @Builder
+  failureControlLayer(platform: LivePlatform) {
+    if (this.shouldRenderFailureControlLayer(platform)) {
+      this.stopPlatformButton(platform)
+    }
+  }
+
+  /**
    * 未开流、已单路停止或实例池耗尽时的固定槽位占位。
    */
   @Builder
@@ -2028,6 +2090,8 @@ struct Index1 {
         this.inactiveLiveSlotLayer(this.getFoldedSlotPlatform())
       }
 
+      this.failureControlLayer(LivePlatform.TAOBAO)
+      this.failureControlLayer(LivePlatform.DOUYIN)
       this.liveKitPushOverlay()
     }
     .width('100%')

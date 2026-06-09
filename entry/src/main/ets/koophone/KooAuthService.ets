@@ -157,11 +157,22 @@ export class KooAuthService {
   }
 
   private assertIamConfig(config: IamPasswordConfig): void {
-    if (!config.authUrl ||
-      this.isPlaceholder(config.domainName) ||
-      this.isPlaceholder(config.userName) ||
-      this.isPlaceholder(config.password)) {
-      throw new Error('IAM config is incomplete')
+    const missingFields: string[] = []
+    if (!config.authUrl) {
+      missingFields.push('authUrl')
+    }
+    if (this.isPlaceholder(config.domainName)) {
+      missingFields.push('domainName')
+    }
+    if (this.isPlaceholder(config.userName)) {
+      missingFields.push('userName')
+    }
+    if (this.isPlaceholder(config.password)) {
+      missingFields.push('password')
+    }
+
+    if (missingFields.length > 0) {
+      throw new Error(`IAM config is incomplete: ${missingFields.join(',')}`)
     }
   }
 

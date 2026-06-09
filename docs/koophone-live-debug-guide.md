@@ -218,6 +218,29 @@ KooPhone 实例鉴权响应字段映射：
 | `data.resource.rtc.ice_signaling.signaling_url` | `KooPhoneParams.signalingUrl` | 信令服务地址 |
 | `data.device_token` | `KooPhoneParams.token` | 短效 SDK token |
 | `data.resource.device_id` | `KooPhoneParams.boxId` | 云手机设备 ID |
+
+失败诊断入口：
+
+```text
+startPlatformIfReady(platform)
+  -> KooAuthService.requestSdkToken()
+  -> requestIamToken()
+  -> requestKooPhoneAuth()
+  -> KooPhonePlayer.open()
+  -> handlePlatformError() / handlePlatformStateChange()
+  -> schedulePlatformRetry()
+  -> buildTerminalFailureMessage()
+```
+
+最终失败文案会区分断点：
+
+- `IAM 配置不完整，实际 IAM token 未获取`：构建包没有注入真实 IAM 参数，或参数仍是 `__IAM_*__` 占位符。
+- `IAM token 请求失败，实际 IAM token 未获取`：已经发起 IAM 请求，但网络、状态码或 IAM 服务侧失败。
+- `IAM 响应缺少 X-Subject-Token，实际 IAM token 未获取`：IAM 返回了响应，但没有拿到用于 KooPhone auth 的 token 头。
+- `KooPhone 实例鉴权失败，已进入实例鉴权阶段`：IAM token 阶段已经通过或至少进入 KooPhone auth 请求。
+- `播放器或信令启动失败，已进入 SDK 开流阶段`：`KooPhonePlayer.open()` 后的 SDK、WebSocket、RTC 或信令链路失败。
+
+失败态仍会保留“停止直播”按钮。点击后调用 `stopPlatformStream(platform)`，清理该路 retry timer、关闭播放器、重置该路状态并回到选择或补开页面。
 | `data.streamingId` | `KooPhoneParams.streamingId` | 有返回时透传给信令连接 |
 | `data.resource.rtc.ice_signaling.ice_servers` | `KooPhoneParams.iceServers` | 有 ICE server 时透传给 WebRTC |
 

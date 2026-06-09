@@ -9,6 +9,7 @@ import {
   resolveKooFoldedVisibleSlot,
   shouldRenderKooFoldedSwitch,
   shouldShowKooFoldedSwitch,
+  shouldShowKooLiveFailureStopControl,
   shouldShowKooLiveAddPanel
 } from '../main/ets/koophone/KooLiveSlotPolicy';
 import {
@@ -178,6 +179,25 @@ export default function localUnitTest() {
       });
 
       expect(visible).assertEqual(false);
+    });
+
+    it('showsStopControlForFailedStreamUntilUserExits', 0, () => {
+      const visible = shouldShowKooLiveFailureStopControl({
+        shouldStart: true,
+        isSlotFailed: true
+      });
+      const hiddenAfterExit = shouldShowKooLiveFailureStopControl({
+        shouldStart: false,
+        isSlotFailed: true
+      });
+      const hiddenBeforeFailure = shouldShowKooLiveFailureStopControl({
+        shouldStart: true,
+        isSlotFailed: false
+      });
+
+      expect(visible).assertEqual(true);
+      expect(hiddenAfterExit).assertEqual(false);
+      expect(hiddenBeforeFailure).assertEqual(false);
     });
 
     it('startsAdditionalSelectionOnlyAfterUserChoosesInactivePlatform', 0, () => {
