@@ -18,7 +18,7 @@ import {
   getLiveKitPushButtonColor,
   getLiveKitPushButtonText,
   isLiveKitPushConfigReady,
-  shouldStopLiveKitPush
+  shouldAutoStopLiveKitPush
 } from '../push/LiveKitPushPolicy'
 import {
   KooInputController,
@@ -96,6 +96,10 @@ const LIVEKIT_PREVIEW_COMPONENT_ID = 'livekit-local-camera-preview'
 const LIVEKIT_PANEL_BACKGROUND = '#66000000'
 const LIVEKIT_SWITCH_CAMERA = '#2F6FEB'
 const ENABLE_LIVEKIT_PUSH_STOP_BUTTON = false
+const LIVEKIT_EXPERIMENT_USE_GLASSES_CAMERA = true
+const LIVEKIT_EXPERIMENT_ALLOW_STANDALONE_PUSH = true
+const LIVEKIT_EXPERIMENT_GLASSES_CAMERA_DEVICE_ID =
+  '__LIVEKIT_GLASSES_CAMERA_DEVICE_ID__'
 
 @Entry
 @Component
@@ -358,9 +362,10 @@ struct Index1 {
    * 当所有云机直播都不再处于 active 状态时，自动释放本机摄像头。
    */
   private stopLiveKitPushIfNoActiveKooLive(): void {
-    if (shouldStopLiveKitPush(
+    if (shouldAutoStopLiveKitPush(
       this.isPlatformLiveActive(LivePlatform.TAOBAO),
-      this.isPlatformLiveActive(LivePlatform.DOUYIN)
+      this.isPlatformLiveActive(LivePlatform.DOUYIN),
+      LIVEKIT_EXPERIMENT_ALLOW_STANDALONE_PUSH
     )) {
       this.stopLiveKitPushForLifecycle()
     }
@@ -389,11 +394,6 @@ struct Index1 {
   private async startLiveKitPush(): Promise<void> {
     this.refreshLiveKitPreviewSurfaceId()
 
-    if (!this.hasAnyPlatformLiveActive()) {
-      this.liveKitErrorText = '请先打开淘宝或抖音云机直播'
-      return
-    }
-
     if (!isLiveKitPushConfigReady(LIVEKIT_SFU_URL, LIVEKIT_SFU_TOKEN)) {
       this.liveKitErrorText = '请先替换 LiveKit SFU url/token'
       return
@@ -421,7 +421,7 @@ struct Index1 {
         return
       }
 
-      const published = await liveKitUtil.publishVideo(this.liveKitSurfaceId)
+      const published = await liveKitUtil.publishVideo(this.liveKitSurfaceId, this.getLiveKitExperimentDeviceId())
       if (!published) {
         this.liveKitErrorText = liveKitUtil.errorMessage
         liveKitUtil.forceResetForNextPush()
@@ -1508,59 +1508,65 @@ struct Index1 {
    */
   @Builder
   selectionPage() {
-    Column() {
-      Text('开始直播')
-        .fontSize(26)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(TEXT_PRIMARY)
-        .width('100%')
+    Stack({ alignContent: Alignment.TopStart }) {
+      Column() {
+        Text('开始直播')
+          .fontSize(26)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(TEXT_PRIMARY)
+          .width('100%')
 
-      Text('请选择直播平台')
-        .fontSize(22)
-        .fontColor(TEXT_SECONDARY)
-        .width('100%')
-        .textAlign(TextAlign.Center)
-        .margin({ top: this.getPromptTop(), bottom: 28 })
+        Text('请选择直播平台')
+          .fontSize(22)
+          .fontColor(TEXT_SECONDARY)
+          .width('100%')
+          .textAlign(TextAlign.Center)
+          .margin({ top: this.getPromptTop(), bottom: 28 })
 
-      Column({ space: 22 }) {
-        this.platformOption(LivePlatform.TAOBAO, '淘宝直播')
-        this.platformOption(LivePlatform.DOUYIN, '抖音直播')
-      }
-      .width('100%')
-
-      Blank()
-
-      Row() {
-        Blank()
-        Row() {
-          Text('开始直播')
-            .fontSize(18)
-            .fontWeight(FontWeight.Medium)
-            .fontColor(Color.White)
-            .maxLines(1)
+        Column({ space: 22 }) {
+          this.platformOption(LivePlatform.TAOBAO, '淘宝直播')
+          this.platformOption(LivePlatform.DOUYIN, '抖音直播')
         }
-          .width(154)
-          .height(54)
-          .justifyContent(FlexAlign.Center)
-          .backgroundColor(this.hasSelection() ? LIVE_RED : DISABLED_BUTTON)
-          .borderRadius(27)
-          .onClick(() => {
-            if (!this.hasSelection()) {
-              return
-            }
-            this.startSelectedStreams()
-          })
+        .width('100%')
+
+        Blank()
+
+        Row() {
+          Blank()
+          Row() {
+            Text('开始直播')
+              .fontSize(18)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(Color.White)
+              .maxLines(1)
+          }
+            .width(154)
+            .height(54)
+            .justifyContent(FlexAlign.Center)
+            .backgroundColor(this.hasSelection() ? LIVE_RED : DISABLED_BUTTON)
+            .borderRadius(27)
+            .onClick(() => {
+              if (!this.hasSelection()) {
+                return
+              }
+              this.startSelectedStreams()
+            })
+        }
+        .width('100%')
       }
       .width('100%')
+      .height('100%')
+      .padding({
+        top: this.rootWidth >= EXPANDED_SCREEN_MIN_WIDTH ? 58 : 32,
+        left: this.getPagePadding(),
+        right: this.getPagePadding(),
+        bottom: 36
+      })
+
+      this.liveKitPushOverlay()
     }
     .width('100%')
     .height('100%')
-    .padding({
-      top: this.rootWidth >= EXPANDED_SCREEN_MIN_WIDTH ? 58 : 32,
-      left: this.getPagePadding(),
-      right: this.getPagePadding(),
-      bottom: 36
-    })
     .backgroundColor(PAGE_BACKGROUND)
   }
 
@@ -1659,6 +1665,24 @@ struct Index1 {
     return this.liveKitPushing ? 118 : 108
   }
 
+  private getLiveKitExperimentDeviceId(): string {
+    if (!LIVEKIT_EXPERIMENT_USE_GLASSES_CAMERA) {
+      return ''
+    }
+    const deviceId = LIVEKIT_EXPERIMENT_GLASSES_CAMERA_DEVICE_ID.trim()
+    if (deviceId.length === 0 || deviceId.indexOf('__LIVEKIT_') >= 0) {
+      return ''
+    }
+    return deviceId
+  }
+
+  private getLiveKitPreviewLabel(): string {
+    if (this.getLiveKitExperimentDeviceId().length > 0) {
+      return this.liveKitPreviewReady ? '眼镜预览' : '等待眼镜'
+    }
+    return this.liveKitPreviewReady ? '本机预览' : '等待预览'
+  }
+
   /**
    * 本机摄像头预览 surface。这个 surface 只给 LiveKit publishVideo 使用，
    * 与淘宝/抖音云机画面的 KooPhone surface 完全隔离。
@@ -1689,7 +1713,7 @@ struct Index1 {
       })
 
       if (!this.liveKitPushing) {
-        Text(this.liveKitPreviewReady ? '本机预览' : '等待预览')
+        Text(this.getLiveKitPreviewLabel())
           .fontSize(9)
           .fontColor('#DDE3EA')
           .maxLines(1)

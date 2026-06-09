@@ -1,5 +1,5 @@
 import { abilityAccessCtrl, common } from '@kit.AbilityKit'
-import { AudioLevelInfo, createLiveKitClient, LiveKitClient } from 'livekit-harmony'
+import { AudioLevelInfo, createLiveKitClient, LiveKitClient, VideoCaptureOptions } from 'livekit-harmony'
 import { RtcModel, SpeakerModel } from './RtcModel'
 
 /**
@@ -60,7 +60,7 @@ class LiveKitUtil {
 
       if (!this.client.isConnected) {
         this.roomState = 'disconnected'
-        this.errorMessage = this.errorMessage.length > 0 ? this.errorMessage : '连接 LiveKit SFU 房间失败'
+        this.errorMessage = this.getReadableErrorMessage(this.errorMessage, '连接 LiveKit SFU 房间失败')
         return false
       }
 
@@ -68,7 +68,7 @@ class LiveKitUtil {
       return true
     } catch (error) {
       this.roomState = 'disconnected'
-      this.errorMessage = String(error)
+      this.errorMessage = this.getReadableErrorMessage(String(error), '连接 LiveKit SFU 房间失败')
       console.error('[LiveKitUtil] joinRoom failed:', error)
       return false
     }
@@ -135,7 +135,7 @@ class LiveKitUtil {
    * 发布本机摄像头视频。surfaceId 必须来自本机预览 XComponent，不能复用云机串流 surface。
    * @returns true 表示视频轨道已发布到 SFU。
    */
-  async publishVideo(surfaceId: string): Promise<boolean> {
+  async publishVideo(surfaceId: string, deviceId: string = ''): Promise<boolean> {
     if (surfaceId.length === 0) {
       this.errorMessage = '本机摄像头预览 surface 未准备好'
       console.warn('[LiveKitUtil] publishVideo called with empty surfaceId')
@@ -150,7 +150,17 @@ class LiveKitUtil {
 
     this.localVideoSurfaceId = surfaceId
     try {
-      await this.client.publishVideo(surfaceId)
+      const normalizedDeviceId = deviceId.trim()
+      const options: VideoCaptureOptions = {
+        width: normalizedDeviceId.length > 0 ? 1280 : 640,
+        height: 720,
+        frameRate: 15
+      }
+      if (normalizedDeviceId.length > 0) {
+        options.deviceId = normalizedDeviceId
+        console.info('[LiveKitUtil] publishVideo with explicit deviceId:', normalizedDeviceId)
+      }
+      await this.client.publishVideo(surfaceId, options)
       this.isVideoPublished = true
       return true
     } catch (error) {
@@ -345,7 +355,7 @@ class LiveKitUtil {
       this.localVideoSurfaceId = ''
       client.stopAudioLevelObserver()
       if (data.error) {
-        this.errorMessage = String(data.error.message)
+        this.errorMessage = this.getReadableErrorMessage(String(data.error.message), '连接 LiveKit SFU 房间失败')
       }
       console.info('[LiveKitUtil] 已断开连接')
     })
@@ -391,6 +401,14 @@ class LiveKitUtil {
 
   private isCurrentClientGeneration(generation: number): boolean {
     return generation === this.clientGeneration
+  }
+
+  private getReadableErrorMessage(message: string, fallback: string): string {
+    const normalized = message.trim()
+    if (normalized.length === 0 || normalized === 'undefined' || normalized === '[object Object]') {
+      return fallback
+    }
+    return normalized
   }
 }
 

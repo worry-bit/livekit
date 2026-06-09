@@ -22,6 +22,7 @@ import {
   LIVEKIT_PUSH_DISABLED,
   LIVEKIT_PUSH_GREEN,
   LIVEKIT_PUSH_RED,
+  shouldAutoStopLiveKitPush,
   shouldStopLiveKitPush
 } from '../main/ets/push/LiveKitPushPolicy';
 
@@ -363,6 +364,11 @@ export default function localUnitTest() {
       expect(shouldStopLiveKitPush(true, false)).assertEqual(false);
       expect(shouldStopLiveKitPush(false, true)).assertEqual(false);
       expect(shouldStopLiveKitPush(false, false)).assertEqual(true);
+    });
+
+    it('allowsStandalonePushWhenExperimentFlagIsEnabled', 0, () => {
+      expect(shouldAutoStopLiveKitPush(false, false, true)).assertEqual(false);
+      expect(shouldAutoStopLiveKitPush(false, false, false)).assertEqual(true);
     });
   });
 }

@@ -244,10 +244,12 @@ export class RTCEngine {
       const height = options?.height ?? 480
       const frameRate = options?.frameRate ?? 15
       const facingMode = options?.facingMode ?? 'user'
+      const deviceId = options?.deviceId?.trim() ?? ''
+      const hasExplicitDevice = deviceId.length > 0
       this.currentFacingMode = facingMode
 
       const sharedTrack = KooUserMedia.getSharedVideoTrack()
-      if (sharedTrack && KooUserMedia.retainSharedVideoTrack(sharedTrack)) {
+      if (!hasExplicitDevice && sharedTrack && KooUserMedia.retainSharedVideoTrack(sharedTrack)) {
         this.videoTrack = sharedTrack
         this.videoSource = null
         this.retainedSharedVideoTrack = sharedTrack
@@ -255,7 +257,7 @@ export class RTCEngine {
       } else {
         // 创建 VideoSource 时只传基础采集约束，避免触发 Mate X7 上的相机方向查询崩溃路径。
         // 如果 KooPhone 已经打开摄像头，上面的 sharedTrack 分支会直接复用，避免同时打开两路相机。
-        const constraints: webrtc.MediaTrackConstraints = this.buildVideoConstraints(width, height, frameRate)
+        const constraints: webrtc.MediaTrackConstraints = this.buildVideoConstraints(width, height, frameRate, deviceId)
         this.videoSource = this.peerConnectionFactory.createVideoSource(constraints)
         const localTrackId = `video_${Date.now()}`
         this.videoTrack = this.peerConnectionFactory.createVideoTrack(localTrackId, this.videoSource)
@@ -885,9 +887,14 @@ export class RTCEngine {
     this.videoSource = null
   }
 
-  private buildVideoConstraints(width: number, height: number, frameRate: number): webrtc.MediaTrackConstraints {
+  private buildVideoConstraints(
+    width: number,
+    height: number,
+    frameRate: number,
+    deviceId: string = ''
+  ): webrtc.MediaTrackConstraints {
     const safeFrameRate = Math.max(1, Math.floor(frameRate))
-    return {
+    const constraints: webrtc.MediaTrackConstraints = {
       width: Math.max(1, Math.floor(width)),
       height: Math.max(1, Math.floor(height)),
       frameRate: {
@@ -895,5 +902,10 @@ export class RTCEngine {
         max: Math.max(safeFrameRate, 30)
       }
     }
+    if (deviceId.length > 0) {
+      constraints.deviceId = deviceId
+      console.info('[RTCEngine] Using explicit video deviceId for publishVideo:', deviceId)
+    }
+    return constraints
   }
 }

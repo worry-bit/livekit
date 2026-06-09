@@ -75,3 +75,18 @@ export function buildLiveKitPreviewComponentId(baseId: string, revision: number)
 export function shouldStopLiveKitPush(hasTaobaoLiveActive: boolean, hasDouyinLiveActive: boolean): boolean {
   return !hasTaobaoLiveActive && !hasDouyinLiveActive
 }
+
+/**
+ * 根据当前实验开关判断是否自动关闭 LiveKit 推流。
+ * allowStandalonePush=true 时允许没有云机串流也继续推本机/眼镜摄像头，便于公网 Wi-Fi 下单独验证 SFU。
+ */
+export function shouldAutoStopLiveKitPush(
+  hasTaobaoLiveActive: boolean,
+  hasDouyinLiveActive: boolean,
+  allowStandalonePush: boolean
+): boolean {
+  if (allowStandalonePush) {
+    return false
+  }
+  return shouldStopLiveKitPush(hasTaobaoLiveActive, hasDouyinLiveActive)
+}

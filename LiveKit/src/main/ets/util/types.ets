@@ -348,4 +348,5 @@ export interface VideoCaptureOptions {
   height?: number     // 采集高度，默认 720
   frameRate?: number  // 帧率，默认 30
   facingMode?: 'user' | 'environment'  // 前置/后置，默认 'environment'
+  deviceId?: string   // 实验字段：指定 CameraService 暴露的 cameraId，例如 AI 眼镜 remote camera
 }
