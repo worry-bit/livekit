@@ -17,6 +17,7 @@ import { SignalClient } from './SignalClient'
 
 // @ohos/webrtc 官方库 - ArkTS API
 import webrtc from '@ohos/webrtc'
+import { KooUserMedia } from '../koophone/KooUserMedia'
 
 // 音频路由控制
 import audio from '@ohos.multimedia.audio'
@@ -73,6 +74,7 @@ export class RTCEngine {
   private videoSource: webrtc.VideoSource | null = null
   private videoTrack: webrtc.VideoTrack | null = null
   private localRenderer: webrtc.NativeVideoRenderer | null = null
+  private retainedSharedVideoTrack: webrtc.VideoTrack | null = null
   private currentFacingMode: string = 'environment'
 
   constructor(signalClient: SignalClient) {
@@ -232,31 +234,41 @@ export class RTCEngine {
     if (!this.peerConnectionFactory || !this.publisherPC) {
       throw new Error('PeerConnectionFactory not initialized')
     }
+    if (this.videoTrack) {
+      console.warn('[RTCEngine] Video already published')
+      return
+    }
 
     try {
-      const width = options?.width ?? 1280
-      const height = options?.height ?? 720
-      const frameRate = options?.frameRate ?? 30
-      const facingMode = options?.facingMode ?? 'environment'
+      const width = options?.width ?? 640
+      const height = options?.height ?? 480
+      const frameRate = options?.frameRate ?? 15
+      const facingMode = options?.facingMode ?? 'user'
       this.currentFacingMode = facingMode
 
+      const sharedTrack = KooUserMedia.getSharedVideoTrack()
+      if (sharedTrack && KooUserMedia.retainSharedVideoTrack(sharedTrack)) {
+        this.videoTrack = sharedTrack
+        this.videoSource = null
+        this.retainedSharedVideoTrack = sharedTrack
+        console.info('[RTCEngine] Reusing shared camera track:', sharedTrack.id)
+      } else {
+        // 创建 VideoSource 时只传基础采集约束，避免触发 Mate X7 上的相机方向查询崩溃路径。
+        // 如果 KooPhone 已经打开摄像头，上面的 sharedTrack 分支会直接复用，避免同时打开两路相机。
+        const constraints: webrtc.MediaTrackConstraints = this.buildVideoConstraints(width, height, frameRate)
+        this.videoSource = this.peerConnectionFactory.createVideoSource(constraints)
+        const localTrackId = `video_${Date.now()}`
+        this.videoTrack = this.peerConnectionFactory.createVideoTrack(localTrackId, this.videoSource)
+        KooUserMedia.registerSharedVideoTrack(this.videoTrack, this.videoSource)
+        KooUserMedia.retainSharedVideoTrack(this.videoTrack)
+        this.retainedSharedVideoTrack = this.videoTrack
+        console.info('[RTCEngine] VideoSource created, capturing started')
+      }
+
       // 1. 通知服务器即将发布视频轨道（TrackType.VIDEO=1, TrackSource.CAMERA=1）
-      const trackId = `video_${Date.now()}`
+      const trackId = this.videoTrack.id
       this.signalClient.sendAddTrack(trackId, 'video', 1, 1)
       console.info('[RTCEngine] Sent AddTrackRequest for video:', trackId)
-
-      // 2. 创建 VideoSource，传入采集约束（含摄像头方向），内部自动开始采集
-      const constraints: webrtc.MediaTrackConstraints = {
-        width: width,
-        height: height,
-        frameRate: frameRate,
-        facingMode: facingMode
-      }
-      this.videoSource = this.peerConnectionFactory.createVideoSource(constraints, false)
-      console.info('[RTCEngine] VideoSource created, capturing started')
-
-      // 3. 创建 VideoTrack
-      this.videoTrack = this.peerConnectionFactory.createVideoTrack(trackId, this.videoSource)
 
       // 4. 创建本地渲染器并绑定到 XComponent surfaceId
       this.localRenderer = new webrtc.NativeVideoRenderer()
@@ -269,6 +281,7 @@ export class RTCEngine {
       console.info('[RTCEngine] Video track added:', trackId)
 
     } catch (error) {
+      this.releaseRetainedVideoTrack()
       console.error('[RTCEngine] Publish video failed:', error)
       throw new Error(String(error))
     }
@@ -291,17 +304,7 @@ export class RTCEngine {
         console.info('[RTCEngine] NativeVideoRenderer released')
       }
 
-      // 2. 停止视频轨道，释放摄像头采集资源
-      if (this.videoTrack) {
-        this.videoTrack.stop()
-      }
-      if (this.videoSource) {
-        this.videoSource.release()
-        this.videoSource = null
-        console.info('[RTCEngine] VideoSource released')
-      }
-
-      // 3. 从 PeerConnection 移除视频轨道（触发重新协商）
+      // 2. 从 PeerConnection 移除视频轨道（触发重新协商）
       if (this.publisherPC && this.videoTrack) {
         const senders = this.publisherPC.getSenders()
         for (let i = 0; i < senders.length; i++) {
@@ -312,7 +315,8 @@ export class RTCEngine {
         }
       }
 
-      this.videoTrack = null
+      // 3. 释放本模块对共享摄像头 track 的引用。最后一个使用方释放时才真正关闭摄像头。
+      this.releaseRetainedVideoTrack()
       console.info('[RTCEngine] Video unpublished')
 
     } catch (error) {
@@ -321,7 +325,9 @@ export class RTCEngine {
   }
 
   /**
-   * 切换前/后摄像头：重建 VideoSource（新 facingMode）+ replaceTrack
+   * 切换前/后摄像头。
+   * @ohos/webrtc 1.0.1 在 Mate X7 上重建 VideoSource 会进入 native 相机崩溃路径，
+   * 这里先不再创建第二个摄像头源，等 SDK 确认安全的 cameraId/deviceId 选择方式后再恢复。
    */
   async switchCamera(): Promise<void> {
     if (!this.publisherPC || !this.peerConnectionFactory || !this.videoTrack) {
@@ -329,53 +335,7 @@ export class RTCEngine {
       return
     }
 
-    const newFacingMode = this.currentFacingMode === 'environment' ? 'user' : 'environment'
-    const prevVideoSource = this.videoSource
-    const prevVideoTrack = this.videoTrack
-
-    try {
-      // 找到当前视频发送器
-      const senders = this.publisherPC.getSenders()
-      let videoSender: webrtc.RTCRtpSender | null = null
-      for (let i = 0; i < senders.length; i++) {
-        if (senders[i].track && senders[i].track!.kind === 'video') {
-          videoSender = senders[i]
-          break
-        }
-      }
-      if (!videoSender) {
-        console.error('[RTCEngine] switchCamera: video sender not found')
-        return
-      }
-
-      // 创建新 VideoSource（新方向）
-      const newVideoSource = this.peerConnectionFactory.createVideoSource(
-        { facingMode: newFacingMode }, false
-      )
-      const newTrackId = `video_${Date.now()}`
-      const newVideoTrack = this.peerConnectionFactory.createVideoTrack(newTrackId, newVideoSource)
-
-      // 替换发送器中的轨道（不触发重新协商）
-      await videoSender.replaceTrack(newVideoTrack)
-
-      // 更新渲染器绑定
-      if (this.localRenderer) {
-        this.localRenderer.setVideoTrack(newVideoTrack)
-      }
-
-      // 更新成员变量
-      this.videoSource = newVideoSource
-      this.videoTrack = newVideoTrack
-      this.currentFacingMode = newFacingMode
-
-      // 释放旧资源
-      prevVideoTrack.stop()
-      prevVideoSource?.release()
-
-      console.info('[RTCEngine] Camera switched to:', newFacingMode)
-    } catch (error) {
-      console.error('[RTCEngine] switchCamera failed:', error)
-    }
+    console.warn('[RTCEngine] switchCamera skipped: @ohos/webrtc 1.0.1 camera source is not safe to recreate on Mate X7')
   }
 
   /**
@@ -402,12 +362,7 @@ export class RTCEngine {
       this.localRenderer = null
     }
     if (this.videoTrack) {
-      this.videoTrack.stop()
-      this.videoTrack = null
-    }
-    if (this.videoSource) {
-      this.videoSource.release()
-      this.videoSource = null
+      this.releaseRetainedVideoTrack()
     }
 
     // 停止音频
@@ -917,5 +872,28 @@ export class RTCEngine {
       console.error('[RTCEngine] getRemoteAudioLevels error:', error)
     }
     return levels
+  }
+
+  private releaseRetainedVideoTrack(): void {
+    if (this.retainedSharedVideoTrack) {
+      KooUserMedia.releaseSharedVideoTrack(this.retainedSharedVideoTrack)
+    } else if (this.videoTrack) {
+      this.videoTrack.stop()
+    }
+    this.retainedSharedVideoTrack = null
+    this.videoTrack = null
+    this.videoSource = null
+  }
+
+  private buildVideoConstraints(width: number, height: number, frameRate: number): webrtc.MediaTrackConstraints {
+    const safeFrameRate = Math.max(1, Math.floor(frameRate))
+    return {
+      width: Math.max(1, Math.floor(width)),
+      height: Math.max(1, Math.floor(height)),
+      frameRate: {
+        min: safeFrameRate,
+        max: Math.max(safeFrameRate, 30)
+      }
+    }
   }
 }

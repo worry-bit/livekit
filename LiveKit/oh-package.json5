@@ -17,7 +17,7 @@
     "rtc"
   ],
   "dependencies": {
-    "@ohos/webrtc": "^1.0.1",
+    "@ohos/webrtc": "^1.0.0",
     "protobufjs": "^7.2.4"
   }
 }

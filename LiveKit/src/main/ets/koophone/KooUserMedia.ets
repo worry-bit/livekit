@@ -26,12 +26,21 @@ export interface CameraStateEvent {
   fps?: number
 }
 
+interface SharedCameraCapture {
+  track: webrtc.VideoTrack
+  source: webrtc.VideoSource | null
+  users: number
+}
+
 export class KooUserMedia {
+  private static sharedCameraCapture: SharedCameraCapture | null = null
+
   // PeerConnectionFactory 由外部注入（与 KooRTCSource 共用同一个 pcf）
   private pcf: webrtc.PeerConnectionFactory | null = null
 
   private videoSource: webrtc.VideoSource | null = null
   private videoTrack: webrtc.VideoTrack | null = null
+  private retainedSharedTrack: webrtc.VideoTrack | null = null
 
   private cameraId: number = -1
   private cameraOn: boolean = false
@@ -45,6 +54,68 @@ export class KooUserMedia {
    */
   setPeerConnectionFactory(pcf: webrtc.PeerConnectionFactory): void {
     this.pcf = pcf
+  }
+
+  /**
+   * 返回当前已经打开的本地摄像头轨道。
+   * KooPhone 和 LiveKit 推流共用这一条 track，避免 @ohos/webrtc 同时打开两路摄像头采集。
+   */
+  static getSharedVideoTrack(): webrtc.VideoTrack | null {
+    const capture = KooUserMedia.sharedCameraCapture
+    if (!capture) {
+      return null
+    }
+    if (capture.track.readyState === 'ended') {
+      KooUserMedia.sharedCameraCapture = null
+      return null
+    }
+    return capture.track
+  }
+
+  /**
+   * 将新创建的摄像头轨道注册为全局共享轨道。
+   */
+  static registerSharedVideoTrack(track: webrtc.VideoTrack, source: webrtc.VideoSource | null): void {
+    KooUserMedia.sharedCameraCapture = {
+      track,
+      source,
+      users: 0
+    }
+  }
+
+  /**
+   * 增加共享摄像头轨道使用计数。
+   */
+  static retainSharedVideoTrack(track: webrtc.VideoTrack): boolean {
+    const capture = KooUserMedia.sharedCameraCapture
+    if (!capture || capture.track !== track || track.readyState === 'ended') {
+      return false
+    }
+    capture.users += 1
+    return true
+  }
+
+  /**
+   * 减少共享摄像头轨道使用计数。最后一个使用方释放时才真正关闭摄像头。
+   */
+  static releaseSharedVideoTrack(track: webrtc.VideoTrack): void {
+    const capture = KooUserMedia.sharedCameraCapture
+    if (!capture || capture.track !== track) {
+      return
+    }
+    capture.users = Math.max(0, capture.users - 1)
+    if (capture.users > 0) {
+      return
+    }
+
+    try {
+      capture.track.stop()
+      console.info('[KooUserMedia] Shared camera released')
+    } catch (error) {
+      console.error('[KooUserMedia] release shared camera failed:', String(error))
+    } finally {
+      KooUserMedia.sharedCameraCapture = null
+    }
   }
 
   /**
@@ -77,15 +148,25 @@ export class KooUserMedia {
     try {
       await this.stopCamera()
 
+      const sharedTrack = KooUserMedia.getSharedVideoTrack()
+      if (sharedTrack && KooUserMedia.retainSharedVideoTrack(sharedTrack)) {
+        this.videoTrack = sharedTrack
+        this.videoSource = null
+        this.retainedSharedTrack = sharedTrack
+        this.cameraId = cameraId
+        this.cameraOn = true
+        this.cameraOpening = false
+        console.info('[KooUserMedia] Reusing shared camera track:', sharedTrack.id)
+        this.onSuccess?.('start', 'video', this.videoTrack)
+        return true
+      }
+
       // facingMode: 前摄='user', 后摄='environment'（对应 H5 facingMode 约束）
       const facingMode = cameraId === 1 ? 'user' : 'environment'
 
-      const constraints: webrtc.MediaTrackConstraints = {
-        width: width,
-        height: height,
-        frameRate: fps,
-        facingMode: facingMode
-      }
+      // @ohos/webrtc 1.0.1 在 Mate X7 上直接传 facingMode 容易进入 native 相机方向查询崩溃路径。
+      // 这里只传 README 示例中的基础约束，cameraId/facingMode 仅保留为业务状态。
+      const constraints: webrtc.MediaTrackConstraints = this.buildVideoConstraints(width, height, fps)
 
       this.videoSource = this.pcf.createVideoSource(constraints)
 
@@ -101,6 +182,9 @@ export class KooUserMedia {
       // 创建视频轨道
       const trackId = 'camera_' + cameraId
       this.videoTrack = this.pcf.createVideoTrack(trackId, this.videoSource)
+      KooUserMedia.registerSharedVideoTrack(this.videoTrack, this.videoSource)
+      KooUserMedia.retainSharedVideoTrack(this.videoTrack)
+      this.retainedSharedTrack = this.videoTrack
 
       this.cameraId = cameraId
       this.cameraOn = true
@@ -152,18 +236,28 @@ export class KooUserMedia {
   // ==================== 私有方法 ====================
 
   private async stopCamera(): Promise<void> {
-    if (this.videoTrack) {
-      this.videoTrack.stop()
-      this.videoTrack = null
+    if (this.retainedSharedTrack) {
+      KooUserMedia.releaseSharedVideoTrack(this.retainedSharedTrack)
     }
-    if (this.videoSource) {
-      this.videoSource.release()
-      this.videoSource = null
-    }
+    this.retainedSharedTrack = null
+    this.videoTrack = null
+    this.videoSource = null
     this.cameraOn = false
     this.cameraId = -1
     this.cameraOpening = false
     console.info('[KooUserMedia] Camera stopped')
+  }
+
+  private buildVideoConstraints(width: number, height: number, fps: number): webrtc.MediaTrackConstraints {
+    const safeFps = Math.max(1, Math.floor(fps))
+    return {
+      width: Math.max(1, Math.floor(width)),
+      height: Math.max(1, Math.floor(height)),
+      frameRate: {
+        min: safeFps,
+        max: Math.max(safeFps, 30)
+      }
+    }
   }
 }
 
