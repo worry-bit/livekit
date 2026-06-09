@@ -1,5 +1,6 @@
 import { abilityAccessCtrl, common } from '@kit.AbilityKit'
-import { AudioLevelInfo, createLiveKitClient, LiveKitClient } from 'livekit-harmony'
+import { AudioLevelInfo, createLiveKitClient, LiveKitClient, VideoCaptureOptions } from 'livekit-harmony'
+import { getSafeLiveKitVideoCaptureOptions } from '../push/LiveKitPushPolicy'
 import { RtcModel, SpeakerModel } from './RtcModel'
 
 /**
@@ -150,7 +151,12 @@ class LiveKitUtil {
 
     this.localVideoSurfaceId = surfaceId
     try {
-      await this.client.publishVideo(surfaceId)
+      const captureOptions: VideoCaptureOptions = getSafeLiveKitVideoCaptureOptions()
+      console.info(
+        `[LiveKitUtil] publishVideo with safe capture options: ${captureOptions.width}x${captureOptions.height}` +
+          `@${captureOptions.frameRate}, facingMode=${captureOptions.facingMode}`
+      )
+      await this.client.publishVideo(surfaceId, captureOptions)
       this.isVideoPublished = true
       return true
     } catch (error) {
