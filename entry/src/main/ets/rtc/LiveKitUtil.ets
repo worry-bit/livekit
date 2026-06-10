@@ -14,6 +14,7 @@ class LiveKitUtil {
   isVideoPublished: boolean = false
   hasMediaPermission: boolean = false
   localVideoSurfaceId: string = ''
+  currentVideoDeviceId: string = ''
 
   private client: LiveKitClient = createLiveKitClient()
   private context: common.UIAbilityContext = getContext(this) as common.UIAbilityContext
@@ -151,17 +152,11 @@ class LiveKitUtil {
     this.localVideoSurfaceId = surfaceId
     try {
       const normalizedDeviceId = deviceId.trim()
-      const options: VideoCaptureOptions = {
-        width: normalizedDeviceId.length > 0 ? 1280 : 640,
-        height: 720,
-        frameRate: 15
-      }
-      if (normalizedDeviceId.length > 0) {
-        options.deviceId = normalizedDeviceId
-        console.info('[LiveKitUtil] publishVideo with explicit deviceId:', normalizedDeviceId)
-      }
+      const options = this.createVideoCaptureOptions(normalizedDeviceId)
       await this.client.publishVideo(surfaceId, options)
       this.isVideoPublished = true
+      this.currentVideoDeviceId = normalizedDeviceId
+      this.errorMessage = ''
       return true
     } catch (error) {
       this.isVideoPublished = false
@@ -177,6 +172,7 @@ class LiveKitUtil {
   async unpublishVideo(): Promise<boolean> {
     if (!this.isVideoPublished) {
       this.localVideoSurfaceId = ''
+      this.currentVideoDeviceId = ''
       return true
     }
 
@@ -184,10 +180,41 @@ class LiveKitUtil {
       await this.client.unpublishVideo()
       this.isVideoPublished = false
       this.localVideoSurfaceId = ''
+      this.currentVideoDeviceId = ''
       return true
     } catch (error) {
       this.errorMessage = String(error)
       console.error('[LiveKitUtil] unpublishVideo failed:', error)
+      return false
+    }
+  }
+
+  /**
+   * 不断开 SFU 房间，只替换本地视频采集源。
+   * entry 用它在“手机摄像头 <-> AI 眼镜摄像头”之间切换；如果当前还没发布视频，则退化为首次发布。
+   */
+  async replaceVideoSource(surfaceId: string, deviceId: string = ''): Promise<boolean> {
+    if (surfaceId.length === 0) {
+      this.errorMessage = '本机摄像头预览 surface 未准备好'
+      return false
+    }
+    if (!this.client.isConnected) {
+      this.errorMessage = 'LiveKit 房间未连接，无法切换视频源'
+      return false
+    }
+    if (!this.isVideoPublished) {
+      return this.publishVideo(surfaceId, deviceId)
+    }
+
+    try {
+      await this.client.unpublishVideo()
+      this.isVideoPublished = false
+      this.localVideoSurfaceId = ''
+      this.currentVideoDeviceId = ''
+      return this.publishVideo(surfaceId, deviceId)
+    } catch (error) {
+      this.errorMessage = String(error)
+      console.error('[LiveKitUtil] replaceVideoSource failed:', error)
       return false
     }
   }
@@ -239,6 +266,27 @@ class LiveKitUtil {
     }
   }
 
+  /**
+   * 只请求摄像头权限。眼镜本地预览实验不连接 SFU，也不采集麦克风。
+   */
+  async requestCameraPermission(): Promise<boolean> {
+    const atManager = abilityAccessCtrl.createAtManager()
+    try {
+      const result = await atManager.requestPermissionsFromUser(this.context, ['ohos.permission.CAMERA'])
+      const cameraGranted = result.authResults.length > 0 && result.authResults[0] === 0
+      if (!cameraGranted) {
+        this.errorMessage = '需要摄像头权限才能预览眼镜画面'
+      } else {
+        this.errorMessage = ''
+      }
+      return cameraGranted
+    } catch (error) {
+      this.errorMessage = String(error)
+      console.error('[LiveKitUtil] requestCameraPermission failed:', error)
+      return false
+    }
+  }
+
   private isValidSfuParam(value: string): boolean {
     const normalized = value.trim()
     return normalized.length > 0 && normalized.indexOf('__LIVEKIT_') < 0
@@ -254,6 +302,20 @@ class LiveKitUtil {
     this.participantCount = 0
     this.isVideoPublished = false
     this.localVideoSurfaceId = ''
+    this.currentVideoDeviceId = ''
+  }
+
+  private createVideoCaptureOptions(deviceId: string): VideoCaptureOptions {
+    const options: VideoCaptureOptions = {
+      width: deviceId.length > 0 ? 1280 : 640,
+      height: 720,
+      frameRate: 15
+    }
+    if (deviceId.length > 0) {
+      options.deviceId = deviceId
+      console.info('[LiveKitUtil] publishVideo with explicit deviceId:', deviceId)
+    }
+    return options
   }
 
   /**

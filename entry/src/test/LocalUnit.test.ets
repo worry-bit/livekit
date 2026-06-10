@@ -15,10 +15,15 @@ import {
 import {
   buildLiveKitPreviewComponentId,
   canClickLiveKitPushButton,
+  canSwitchAiGlassesCamera,
+  canSwitchPhoneCamera,
   canToggleLiveKitPush,
+  getLiveKitCameraSourceLabel,
   getLiveKitPushButtonColor,
   getLiveKitPushButtonText,
   isLiveKitPushConfigReady,
+  LIVEKIT_CAMERA_SOURCE_AI_GLASSES,
+  LIVEKIT_CAMERA_SOURCE_PHONE,
   LIVEKIT_PUSH_DISABLED,
   LIVEKIT_PUSH_GREEN,
   LIVEKIT_PUSH_RED,
@@ -369,6 +374,23 @@ export default function localUnitTest() {
     it('allowsStandalonePushWhenExperimentFlagIsEnabled', 0, () => {
       expect(shouldAutoStopLiveKitPush(false, false, true)).assertEqual(false);
       expect(shouldAutoStopLiveKitPush(false, false, false)).assertEqual(true);
+    });
+
+    it('disablesPhoneCameraSwitchAfterAiGlassesSourceSelected', 0, () => {
+      expect(canSwitchPhoneCamera(true, false, LIVEKIT_CAMERA_SOURCE_PHONE)).assertEqual(true);
+      expect(canSwitchPhoneCamera(true, false, LIVEKIT_CAMERA_SOURCE_AI_GLASSES)).assertEqual(false);
+      expect(canSwitchPhoneCamera(false, false, LIVEKIT_CAMERA_SOURCE_PHONE)).assertEqual(false);
+      expect(canSwitchPhoneCamera(true, true, LIVEKIT_CAMERA_SOURCE_PHONE)).assertEqual(false);
+    });
+
+    it('keepsAiGlassesSwitchClickableWhenNotBusy', 0, () => {
+      expect(canSwitchAiGlassesCamera(false)).assertEqual(true);
+      expect(canSwitchAiGlassesCamera(true)).assertEqual(false);
+    });
+
+    it('labelsCurrentLiveKitCameraSource', 0, () => {
+      expect(getLiveKitCameraSourceLabel(LIVEKIT_CAMERA_SOURCE_PHONE)).assertEqual('手机摄像头');
+      expect(getLiveKitCameraSourceLabel(LIVEKIT_CAMERA_SOURCE_AI_GLASSES)).assertEqual('AI眼镜摄像头');
     });
   });
 }

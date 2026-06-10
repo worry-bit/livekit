@@ -278,6 +278,7 @@ export class LiveKitClient implements RTCEngineDelegate {
 
     } catch (error) {
       console.error('[LiveKitClient] Publish video failed:', error)
+      throw new Error(String(error))
     }
   }
 
@@ -298,6 +299,7 @@ export class LiveKitClient implements RTCEngineDelegate {
 
     } catch (error) {
       console.error('[LiveKitClient] Unpublish video failed:', error)
+      throw new Error(String(error))
     }
   }
 

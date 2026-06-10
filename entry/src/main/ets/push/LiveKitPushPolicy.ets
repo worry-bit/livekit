@@ -3,6 +3,12 @@ const LIVEKIT_PLACEHOLDER_PREFIX = '__LIVEKIT_'
 export const LIVEKIT_PUSH_GREEN = '#2EAD5B'
 export const LIVEKIT_PUSH_RED = '#E53935'
 export const LIVEKIT_PUSH_DISABLED = '#8F98A6'
+export const LIVEKIT_SWITCH_BLUE = '#2F6FEB'
+export const LIVEKIT_SWITCH_GLASSES = '#21A366'
+export const LIVEKIT_CAMERA_SOURCE_PHONE = 'phone'
+export const LIVEKIT_CAMERA_SOURCE_AI_GLASSES = 'ai_glasses'
+
+export type LiveKitCameraSource = string
 
 /**
  * 判断 LiveKit SFU 参数是否已替换为真实值。
@@ -59,6 +65,31 @@ export function canClickLiveKitPushButton(isBusy: boolean, isPublished: boolean 
     return false
   }
   return !isPublished || canStop
+}
+
+/**
+ * 本机前后摄切换只在“已经推流 + 当前源是手机摄像头 + 非异步操作中”时可点击。
+ * 切到 AI 眼镜后禁用该按钮，避免 SDK 去重建 Mate X7 本机前摄导致 native 崩溃。
+ */
+export function canSwitchPhoneCamera(isPublished: boolean, isBusy: boolean, cameraSource: LiveKitCameraSource): boolean {
+  return isPublished && !isBusy && cameraSource === LIVEKIT_CAMERA_SOURCE_PHONE
+}
+
+/**
+ * AI 眼镜源切换只要求当前没有异步操作；未推流时点击表示预选眼镜源，推流中点击表示替换视频轨道。
+ */
+export function canSwitchAiGlassesCamera(isBusy: boolean): boolean {
+  return !isBusy
+}
+
+/**
+ * 推流预览区的当前视频源标签。
+ */
+export function getLiveKitCameraSourceLabel(cameraSource: LiveKitCameraSource): string {
+  if (cameraSource === LIVEKIT_CAMERA_SOURCE_AI_GLASSES) {
+    return 'AI眼镜摄像头'
+  }
+  return '手机摄像头'
 }
 
 /**
