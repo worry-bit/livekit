@@ -604,17 +604,20 @@ export class RTCEngine {
         iceRestart: false
       }
       const offer = await this.publisherPC.createOffer(offerOptions)
+      const forcedOffer = this.forcePublisherOfferToVp8(offer)
 
-      // 设置本地描述
+      // HarmonyOS WebRTC 会校验本地 Offer 与内部 transceiver codec 能力是否完全一致。
+      // 本地描述保持原始 offer，发送给 SFU 的信令 offer 使用 VP8-only SDP；
+      // SFU 返回的 VP8 answer 仍是原始 offer 的合法 codec 子集。
       await this.publisherPC.setLocalDescription(offer)
 
       // 发送到服务端
       this.signalClient.sendOffer({
         type: 'offer',
-        sdp: offer.sdp ? offer.sdp : ''
+        sdp: forcedOffer.sdp ? forcedOffer.sdp : ''
       })
 
-      console.info('[RTCEngine] Sent offer')
+      console.info('[RTCEngine] Sent VP8-only publisher offer to SFU')
     } catch (error) {
       console.error('[RTCEngine] Negotiate error:', error)
     } finally {
@@ -684,6 +687,7 @@ export class RTCEngine {
     }
 
     try {
+      console.info('[RTCEngine] Remote answer video codecs:', this.describeVideoCodecOrder(answer.sdp))
       const remoteDesc: webrtc.RTCSessionDescription = {
         type: answer.type,
         sdp: answer.sdp,
@@ -976,6 +980,251 @@ export class RTCEngine {
     this.retainedSharedVideoTrack = null
     this.videoTrack = null
     this.videoSource = null
+  }
+
+  /**
+   * 强制发布端 Offer 只保留 VP8 视频编码。
+   *
+   * 当前 @ohos/webrtc 包没有稳定暴露 RTCRtpTransceiver.setCodecPreferences()，
+   * 因此在 publisher offer 生成后、setLocalDescription 之前改写 SDP。
+   * 如果 offer 中没有 VP8，则直接失败，避免静默回落到 H264。
+   */
+  private forcePublisherOfferToVp8(offer: webrtc.RTCSessionDescriptionInit): webrtc.RTCSessionDescription {
+    const originalSdp = offer.sdp ? offer.sdp : ''
+    const beforeOrder = this.describeVideoCodecOrder(originalSdp)
+    const forcedSdp = this.forceVideoCodecInSdp(originalSdp, 'VP8')
+    const afterOrder = this.describeVideoCodecOrder(forcedSdp)
+
+    console.info('[RTCEngine] Publisher offer video codecs before VP8 force:', beforeOrder)
+    console.info('[RTCEngine] Publisher offer video codecs after VP8 force:', afterOrder)
+
+    const forcedOffer: webrtc.RTCSessionDescription = {
+      type: offer.type,
+      sdp: forcedSdp,
+      toJSON: (): webrtc.RTCSessionDescriptionInit => {
+        throw new Error('Function not implemented.')
+      }
+    }
+    return forcedOffer
+  }
+
+  /**
+   * 只保留指定视频编码及其关联 RTX payload，移除同一 m=video 段中的其他编码。
+   */
+  private forceVideoCodecInSdp(sdp: string, codecName: string): string {
+    if (sdp.length === 0) {
+      return sdp
+    }
+
+    const normalizedSdp = sdp.replace(/\r\n/g, '\n')
+    const lines = normalizedSdp.split('\n')
+    const videoStart = this.findMediaSectionStart(lines, 'video')
+    if (videoStart < 0) {
+      return sdp
+    }
+    const videoEnd = this.findMediaSectionEnd(lines, videoStart)
+    const allowedPayloads = this.collectAllowedVideoPayloads(lines, videoStart, videoEnd, codecName)
+    if (allowedPayloads.length === 0) {
+      throw new Error(`VP8 codec is not available in publisher offer SDP, cannot publish ${codecName}`)
+    }
+
+    const allowedPayloadMap: Map<string, boolean> = new Map()
+    for (let i = 0; i < allowedPayloads.length; i++) {
+      allowedPayloadMap.set(allowedPayloads[i], true)
+    }
+
+    const mLineParts = lines[videoStart].split(' ')
+    const rewrittenVideoLines: string[] = []
+    rewrittenVideoLines.push(`${mLineParts[0]} ${mLineParts[1]} ${mLineParts[2]} ${allowedPayloads.join(' ')}`)
+
+    for (let i = videoStart + 1; i < videoEnd; i++) {
+      const payload = this.getCodecAttributePayload(lines[i])
+      if (payload.length > 0 && !allowedPayloadMap.has(payload)) {
+        continue
+      }
+      rewrittenVideoLines.push(lines[i])
+    }
+
+    const resultLines: string[] = []
+    for (let i = 0; i < videoStart; i++) {
+      resultLines.push(lines[i])
+    }
+    for (let i = 0; i < rewrittenVideoLines.length; i++) {
+      resultLines.push(rewrittenVideoLines[i])
+    }
+    for (let i = videoEnd; i < lines.length; i++) {
+      if (i === lines.length - 1 && lines[i].length === 0) {
+        continue
+      }
+      resultLines.push(lines[i])
+    }
+    return `${resultLines.join('\r\n')}\r\n`
+  }
+
+  private collectAllowedVideoPayloads(
+    lines: string[],
+    videoStart: number,
+    videoEnd: number,
+    codecName: string
+  ): string[] {
+    const payloadToCodec: Map<string, string> = new Map()
+    const rtxPayloadToApt: Map<string, string> = new Map()
+
+    for (let i = videoStart + 1; i < videoEnd; i++) {
+      const line = lines[i]
+      if (line.startsWith('a=rtpmap:')) {
+        const payload = this.getSdpPayload(line, 'a=rtpmap:')
+        const codec = this.getRtpmapCodecName(line)
+        if (payload.length > 0 && codec.length > 0) {
+          payloadToCodec.set(payload, codec.toUpperCase())
+        }
+      } else if (line.startsWith('a=fmtp:')) {
+        const payload = this.getSdpPayload(line, 'a=fmtp:')
+        const apt = this.getFmtpAptPayload(line)
+        if (payload.length > 0 && apt.length > 0) {
+          rtxPayloadToApt.set(payload, apt)
+        }
+      }
+    }
+
+    const targetCodec = codecName.toUpperCase()
+    const mLineParts = lines[videoStart].split(' ')
+    const allowedPayloads: string[] = []
+    const targetPayloadMap: Map<string, boolean> = new Map()
+
+    for (let i = 3; i < mLineParts.length; i++) {
+      const payload = mLineParts[i]
+      if ((payloadToCodec.get(payload) ?? '') === targetCodec) {
+        targetPayloadMap.set(payload, true)
+      }
+    }
+
+    for (let i = 3; i < mLineParts.length; i++) {
+      const payload = mLineParts[i]
+      const codec = payloadToCodec.get(payload) ?? ''
+      const apt = rtxPayloadToApt.get(payload) ?? ''
+      if (codec === targetCodec || (codec === 'RTX' && targetPayloadMap.has(apt))) {
+        allowedPayloads.push(payload)
+      }
+    }
+    return allowedPayloads
+  }
+
+  private describeVideoCodecOrder(sdp: string): string {
+    if (sdp.length === 0) {
+      return 'empty'
+    }
+
+    const lines = sdp.replace(/\r\n/g, '\n').split('\n')
+    const videoStart = this.findMediaSectionStart(lines, 'video')
+    if (videoStart < 0) {
+      return 'no-video-m-line'
+    }
+    const videoEnd = this.findMediaSectionEnd(lines, videoStart)
+    const payloadToCodec: Map<string, string> = new Map()
+    const rtxPayloadToApt: Map<string, string> = new Map()
+
+    for (let i = videoStart + 1; i < videoEnd; i++) {
+      const line = lines[i]
+      if (line.startsWith('a=rtpmap:')) {
+        const payload = this.getSdpPayload(line, 'a=rtpmap:')
+        const codec = this.getRtpmapCodecName(line)
+        if (payload.length > 0 && codec.length > 0) {
+          payloadToCodec.set(payload, codec.toUpperCase())
+        }
+      } else if (line.startsWith('a=fmtp:')) {
+        const payload = this.getSdpPayload(line, 'a=fmtp:')
+        const apt = this.getFmtpAptPayload(line)
+        if (payload.length > 0 && apt.length > 0) {
+          rtxPayloadToApt.set(payload, apt)
+        }
+      }
+    }
+
+    const result: string[] = []
+    const mLineParts = lines[videoStart].split(' ')
+    for (let i = 3; i < mLineParts.length; i++) {
+      const payload = mLineParts[i]
+      const codec = payloadToCodec.get(payload) ?? 'unknown'
+      if (codec === 'RTX') {
+        const apt = rtxPayloadToApt.get(payload) ?? ''
+        const aptCodec = payloadToCodec.get(apt) ?? apt
+        result.push(`${payload}:RTX(apt=${aptCodec})`)
+      } else {
+        result.push(`${payload}:${codec}`)
+      }
+    }
+    return result.length > 0 ? result.join(',') : 'empty-video-payloads'
+  }
+
+  private findMediaSectionStart(lines: string[], mediaKind: string): number {
+    const prefix = `m=${mediaKind} `
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith(prefix)) {
+        return i
+      }
+    }
+    return -1
+  }
+
+  private findMediaSectionEnd(lines: string[], start: number): number {
+    for (let i = start + 1; i < lines.length; i++) {
+      if (lines[i].startsWith('m=')) {
+        return i
+      }
+    }
+    return lines.length
+  }
+
+  private getCodecAttributePayload(line: string): string {
+    if (line.startsWith('a=rtpmap:')) {
+      return this.getSdpPayload(line, 'a=rtpmap:')
+    }
+    if (line.startsWith('a=fmtp:')) {
+      return this.getSdpPayload(line, 'a=fmtp:')
+    }
+    if (line.startsWith('a=rtcp-fb:')) {
+      return this.getSdpPayload(line, 'a=rtcp-fb:')
+    }
+    return ''
+  }
+
+  private getSdpPayload(line: string, prefix: string): string {
+    const payloadStart = prefix.length
+    let payloadEnd = line.indexOf(' ', payloadStart)
+    if (payloadEnd < 0) {
+      payloadEnd = line.length
+    }
+    const payload = line.substring(payloadStart, payloadEnd)
+    return payload === '*' ? '' : payload
+  }
+
+  private getRtpmapCodecName(line: string): string {
+    const payloadStart = 'a=rtpmap:'.length
+    const payloadEnd = line.indexOf(' ', payloadStart)
+    if (payloadEnd < 0 || payloadEnd >= line.length - 1) {
+      return ''
+    }
+    const codecValue = line.substring(payloadEnd + 1)
+    const slashIndex = codecValue.indexOf('/')
+    return slashIndex >= 0 ? codecValue.substring(0, slashIndex) : codecValue
+  }
+
+  private getFmtpAptPayload(line: string): string {
+    const payloadStart = 'a=fmtp:'.length
+    const payloadEnd = line.indexOf(' ', payloadStart)
+    if (payloadEnd < 0 || payloadEnd >= line.length - 1) {
+      return ''
+    }
+    const fmtpValue = line.substring(payloadEnd + 1)
+    const parts = fmtpValue.split(';')
+    for (let i = 0; i < parts.length; i++) {
+      const item = parts[i].trim()
+      if (item.startsWith('apt=')) {
+        return item.substring('apt='.length)
+      }
+    }
+    return ''
   }
 
   private async createMediaDevicesVideoTrack(

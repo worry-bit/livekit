@@ -9,8 +9,8 @@
 
 用户提供了两个真实 KooPhone 实例 ID：
 
-- 淘宝直播：`dhb4q9j4`
-- 抖音直播：`sKuBZq7c`
+- 淘宝直播：`__TAOBAO_INSTANCE_ID__`
+- 抖音直播：`__DOUYIN_INSTANCE_ID__`
 
 ## 本轮代码增量
 
@@ -25,9 +25,9 @@
 实现能力：
 
 - 淘宝实例鉴权路径自动拼成：
-  `http://100.93.2.248:8669/openapi/koophone/v1/instances/dhb4q9j4/auth`
+  `__KOOPHONE_AUTH_HOST__/openapi/koophone/v1/instances/__TAOBAO_INSTANCE_ID__/auth`
 - 抖音实例鉴权路径自动拼成：
-  `http://100.93.2.248:8669/openapi/koophone/v1/instances/sKuBZq7c/auth`
+  `__KOOPHONE_AUTH_HOST__/openapi/koophone/v1/instances/__DOUYIN_INSTANCE_ID__/auth`
 - `startPlatformIfReady()` 增加启动、鉴权成功、失败日志。
 - `schedulePlatformRetry()` 增加每次重试日志。
 
@@ -118,7 +118,7 @@ startPlatformIfReady()
   -> KooAuthService.requestIamToken()
   -> POST https://iam.myhuaweicloud.com/v3/auth/tokens?nocatalog=true
   -> 读取 X-Subject-Token
-  -> POST http://100.93.2.248:8669/openapi/koophone/v1/instances/{kp_id}/auth
+  -> POST __KOOPHONE_AUTH_HOST__/openapi/koophone/v1/instances/{kp_id}/auth
   -> 解析 signaling_url / device_token / device_id
   -> KooPhonePlayer.open()
   -> KooSignalClient WebSocket

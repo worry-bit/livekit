@@ -146,10 +146,10 @@ Signature material verification failed, as: Unsupported state or unable to authe
 
 已确认：
 
-- `default_livekit` profile 是 debug profile。
+- `__LOCAL_SIGNING_CONFIG__` profile 是 debug profile。
 - profile bundle name 是 `com.samples.ndkopengl`。
 - unsigned HAP 已生成。
-- 旧 hvigor report 证明 2026-06-10 曾经用同一套 `default_livekit` p12/p7b/cer 签名成功。
+- 旧 hvigor report 证明 2026-06-10 曾经用同一套 `__LOCAL_SIGNING_CONFIG__` p12/p7b/cer 签名成功。
 - 当前可搜索到的旧加密 `keyPassword/storePassword` 已不能解当前 p12，不能继续随机猜。
 
 下一步需要在 DevEco Studio 的 `File -> Project Structure -> Signing Configs` 里重新保存当前签名配置，让 `build-profile.json5` 写入新的可解密密文；之后重新执行 `clean assembleApp` 即可产出 signed HAP 并安装。

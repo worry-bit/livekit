@@ -67,8 +67,8 @@
 2026-06-05 真机联调时已接入真实实例 ID，当前完整路径由 `KOOPHONE_AUTH_HOST` 和实例 ID 生成：
 
 ```text
-http://100.93.2.248:8669/openapi/koophone/v1/instances/dhb4q9j4/auth
-http://100.93.2.248:8669/openapi/koophone/v1/instances/sKuBZq7c/auth
+__KOOPHONE_AUTH_HOST__/openapi/koophone/v1/instances/__TAOBAO_INSTANCE_ID__/auth
+__KOOPHONE_AUTH_HOST__/openapi/koophone/v1/instances/__DOUYIN_INSTANCE_ID__/auth
 ```
 
 后续更换实例时只替换 host 和 kp_id，不需要再改 SDK 参数组装代码。

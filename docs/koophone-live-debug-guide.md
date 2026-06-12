@@ -81,7 +81,7 @@ platformOption(platform, title)
   -> startSelectedStreams()
   -> shouldStartTaobao / shouldStartDouyin 记录要启动的平台
   -> prepareInitialInstanceAssignments()
-  -> 淘宝优先 dhb4q9j4，抖音优先 sKuBZq7c
+  -> 淘宝优先 __TAOBAO_INSTANCE_ID__，抖音优先 __DOUYIN_INSTANCE_ID__
   -> isLiveStarted = true 进入直播页
   -> livePage()
   -> liveContent()
@@ -306,7 +306,7 @@ WebSocket / WebRTC 失败
 当前手写共享池在 `Index1.ets` 顶部：
 
 ```text
-KOOPHONE_INSTANCE_POOL = [dhb4q9j4, sKuBZq7c]
+KOOPHONE_INSTANCE_POOL = [__TAOBAO_INSTANCE_ID__, __DOUYIN_INSTANCE_ID__]
 ```
 
 如果租户下后续增加备用实例，只需要往这个列表追加 `{ id: '<kp_id>' }`，不要把两路直播同时配置为同一个正在使用的实例。
@@ -375,14 +375,14 @@ hdc -t 127.0.0.1:5555 file recv /data/local/tmp/livekit.jpeg ./livekit.jpeg
 
 当前真机联调实例 ID 已接入代码：
 
-- 淘宝直播：`dhb4q9j4`
-- 抖音直播：`sKuBZq7c`
+- 淘宝直播：`__TAOBAO_INSTANCE_ID__`
+- 抖音直播：`__DOUYIN_INSTANCE_ID__`
 - 共享实例池：`KOOPHONE_INSTANCE_POOL`，默认包含上面两个实例，后续手动追加备用实例。
 
 当前测试环境 URL 位于 `entry/src/main/ets/pages/Index1.ets` 顶部常量：
 
-- `IAM_AUTH_URL`：测试环境 IAM token 地址，当前为 `https://iam.cn-north-7.myhuaweicloud.com/v3/auth/tokens`。
-- `KOOPHONE_AUTH_HOST`：测试环境 KooPhone auth host，当前为 `http://100.93.2.248:8669`。
+- `IAM_AUTH_URL`：测试环境 IAM token 地址，当前为 `__IAM_AUTH_URL__`。
+- `KOOPHONE_AUTH_HOST`：测试环境 KooPhone auth host，当前为 `__KOOPHONE_AUTH_HOST__`。
 - `TAOBAO_INSTANCE_ID / DOUYIN_INSTANCE_ID`：两路直播实例 ID。
 
 后续切生产环境时，按当前接口约定只改 URL：

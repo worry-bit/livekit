@@ -8,7 +8,7 @@
 - 2026-06-10 追加修复：按钮文案改为“推送AI眼镜视频流”和“推送手机视频流”；切换 AI 眼镜时先把 sender 置空并释放旧手机摄像头，再创建 AI 眼镜 track，避免同时占用两路摄像头导致卡住。
 - 2026-06-10 二次修复：`RTCEngine.buildVideoConstraints()` 中的 `deviceId` 从普通字符串改为 `{ exact: cameraId }`。普通字符串只是偏好值，底层可回退到默认手机摄像头；`exact` 才能强制使用 AI Glasses remote camera。切换失败时会尝试恢复原手机视频轨道。
 - 2026-06-10 三次修复：真机复现“点击开始直播推流后进程直接退出”，系统生成 `cppcrash-com.samples.ndkopengl...`。原因是手机推流也走了 `{ exact: device/0 }` 约束，`@ohos/webrtc` native 侧不稳定。修复为：手机视频流不传本机 cameraId，只传基础约束；只有 AI Glasses remote cameraId（包含 `__Camera_`）才使用 `{ exact }`。
-- 2026-06-10 追加配置：实例池新增 `1MciuPGv`，淘宝直播默认实例改为 `1MciuPGv`，原 `dhb4q9j4` 保留为备用实例。
+- 2026-06-10 追加配置：实例池新增 `__TAOBAO_INSTANCE_ID__`，淘宝直播默认实例改为 `__TAOBAO_INSTANCE_ID__`，原 `__TAOBAO_INSTANCE_ID__` 保留为备用实例。
 
 ## 修改文件
 
@@ -20,7 +20,7 @@
 - `switchLiveKitToAiGlassesCamera()` 在已推流状态下才显示预览并执行视频源替换；未推流状态只预选 AI 眼镜源。
 - `selectionPage()` 删除 `liveKitPushOverlay()` 渲染点，初始选择页不再出现任何推流组件。
 - `liveKitSwitchAiGlassesButton()` 文案改为“推送AI眼镜视频流”。
-- 淘宝默认实例 `TAOBAO_INSTANCE_ID` 改为 `1MciuPGv`，并将 `dhb4q9j4` 放入共享实例池作为备用。
+- 淘宝默认实例 `TAOBAO_INSTANCE_ID` 改为 `__TAOBAO_INSTANCE_ID__`，并将 `__TAOBAO_INSTANCE_ID__` 放入共享实例池作为备用。
 
 ### entry/src/main/ets/push/LiveKitPushPolicy.ets
 

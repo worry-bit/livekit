@@ -70,7 +70,7 @@ DEVECO_SDK_HOME=/Users/wangrui/Downloads/command-line-tools/sdk /Users/wangrui/D
 
 - 临时注入真实 IAM 参数。
 - 临时注入真实 LiveKit SFU url/token。
-- 临时切换 `build-profile.json5` 到本机 `default_livekit` 签名材料。
+- 临时切换 `build-profile.json5` 到本机 `__LOCAL_SIGNING_CONFIG__` 签名材料。
 - 执行 `assembleApp`，签名 HAP 构建成功。
 - 构建完成后恢复占位符和仓库安全签名配置。
 

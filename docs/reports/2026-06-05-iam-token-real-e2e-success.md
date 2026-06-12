@@ -4,13 +4,13 @@
 
 本轮补齐测试环境 IAM 接口信息后，在真实 Huawei Mate X7 上完成了双路端到端串流验证。两路直播分别绑定：
 
-- 淘宝直播：KooPhone 实例 `dhb4q9j4`
-- 抖音直播：KooPhone 实例 `sKuBZq7c`
+- 淘宝直播：KooPhone 实例 `__TAOBAO_INSTANCE_ID__`
+- 抖音直播：KooPhone 实例 `__DOUYIN_INSTANCE_ID__`
 
 测试环境接口：
 
-- IAM token：`https://iam.cn-north-7.myhuaweicloud.com/v3/auth/tokens`
-- KooPhone auth host：`http://100.93.2.248:8669`
+- IAM token：`__IAM_AUTH_URL__`
+- KooPhone auth host：`__KOOPHONE_AUTH_HOST__`
 
 真实 IAM 账号和密码只在本地真机调试时临时写入，提交前已恢复为占位符。
 

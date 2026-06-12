@@ -58,7 +58,7 @@ Error: IAM config is incomplete; 当前租户共享实例池已耗尽
 
 ```bash
 /Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/toolchains/hdc list targets -v
-/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/toolchains/hdc shell hilog -x -z 3000 | rg -i 'Index1|KooAuthService|IAM|KooPhone auth|dhb4q9j4|sKuBZq7c|retry|failed|实例池|X-Subject'
+/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/toolchains/hdc shell hilog -x -z 3000 | rg -i 'Index1|KooAuthService|IAM|KooPhone auth|__TAOBAO_INSTANCE_ID__|__DOUYIN_INSTANCE_ID__|retry|failed|实例池|X-Subject'
 ```
 
 如果要重新抓一次，需要先打开应用并重新点击淘宝/抖音直播触发失败，再执行上面的 `hilog` 过滤命令。

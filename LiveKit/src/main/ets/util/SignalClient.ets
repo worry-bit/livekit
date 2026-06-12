@@ -234,7 +234,8 @@ export class SignalClient {
         type: type,
         source: source,
         muted: false,
-        disableRed: false
+        // 视频发布端强制 VP8，不再启用 RED，避免服务端继续协商非 VP8 冗余编码。
+        disableRed: type === 1
       }
     }
     this.sendRequest(signalRequest)

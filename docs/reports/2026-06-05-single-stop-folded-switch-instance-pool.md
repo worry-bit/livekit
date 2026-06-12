@@ -43,7 +43,7 @@
 新增常量：
 
 - `KOOPHONE_INSTANCE_POOL`
-  - 当前包含 `dhb4q9j4` 和 `sKuBZq7c`。
+  - 当前包含 `__TAOBAO_INSTANCE_ID__` 和 `__DOUYIN_INSTANCE_ID__`。
   - 后续同租户备用实例可手动追加到这个列表。
 - `OVERLAY_BACKGROUND = '#4D000000'`
   - 30% 黑色透明浮层。
@@ -67,7 +67,7 @@
 - `buildKooAuthUrl(instanceId)`
   - 生成 `/openapi/koophone/v1/instances/{kp_id}/auth` 完整路径。
 - `prepareInitialInstanceAssignments()`
-  - 开始直播时设置平台首选实例：淘宝优先 `dhb4q9j4`，抖音优先 `sKuBZq7c`。
+  - 开始直播时设置平台首选实例：淘宝优先 `__TAOBAO_INSTANCE_ID__`，抖音优先 `__DOUYIN_INSTANCE_ID__`。
 - `resolveInitialInstance(platform, preferredInstanceId)`
   - 首选实例不可用或被另一直播占用时，从共享池找空闲实例。
 - `findNextAvailableInstance(platform)`
@@ -142,8 +142,8 @@
 
 共享实例池：
 
-- 淘宝优先 `dhb4q9j4`。
-- 抖音优先 `sKuBZq7c`。
+- 淘宝优先 `__TAOBAO_INSTANCE_ID__`。
+- 抖音优先 `__DOUYIN_INSTANCE_ID__`。
 - 同一实例最多重试 3 次。
 - 切备用实例时不抢占另一直播正在使用的实例。
 - 池耗尽只让当前平台失败，不关闭另一平台。

@@ -102,15 +102,15 @@ export default function localUnitTest() {
   describe('KooPhone instance pool strategy', () => {
     it('selectsFirstBackupThatIsNotCurrentTriedOrOccupied', 0, () => {
       const pool: KooInstancePoolEntry[] = [
-        { id: 'dhb4q9j4' },
-        { id: 'sKuBZq7c' },
+        { id: 'taobao-instance-a' },
+        { id: 'douyin-instance-a' },
         { id: 'backup-001' }
       ];
 
       const result = selectNextAvailableKooInstance(pool, {
-        currentInstanceId: 'dhb4q9j4',
-        triedInstanceIds: ['dhb4q9j4'],
-        occupiedInstanceIds: ['sKuBZq7c']
+        currentInstanceId: 'taobao-instance-a',
+        triedInstanceIds: ['taobao-instance-a'],
+        occupiedInstanceIds: ['douyin-instance-a']
       });
 
       expect(result).assertEqual('backup-001');
@@ -118,14 +118,14 @@ export default function localUnitTest() {
 
     it('doesNotSelectInstanceOccupiedByOtherLiveRoom', 0, () => {
       const pool: KooInstancePoolEntry[] = [
-        { id: 'dhb4q9j4' },
-        { id: 'sKuBZq7c' }
+        { id: 'taobao-instance-a' },
+        { id: 'douyin-instance-a' }
       ];
 
       const result = selectNextAvailableKooInstance(pool, {
-        currentInstanceId: 'dhb4q9j4',
-        triedInstanceIds: ['dhb4q9j4'],
-        occupiedInstanceIds: ['sKuBZq7c']
+        currentInstanceId: 'taobao-instance-a',
+        triedInstanceIds: ['taobao-instance-a'],
+        occupiedInstanceIds: ['douyin-instance-a']
       });
 
       expect(result).assertEqual('');
@@ -133,14 +133,14 @@ export default function localUnitTest() {
 
     it('skipsInstancesAlreadyTriedBySamePlatform', 0, () => {
       const pool: KooInstancePoolEntry[] = [
-        { id: 'dhb4q9j4' },
-        { id: 'sKuBZq7c' },
+        { id: 'taobao-instance-a' },
+        { id: 'douyin-instance-a' },
         { id: 'backup-001' }
       ];
 
       const result = selectNextAvailableKooInstance(pool, {
-        currentInstanceId: 'dhb4q9j4',
-        triedInstanceIds: ['dhb4q9j4', 'sKuBZq7c'],
+        currentInstanceId: 'taobao-instance-a',
+        triedInstanceIds: ['taobao-instance-a', 'douyin-instance-a'],
         occupiedInstanceIds: []
       });
 
