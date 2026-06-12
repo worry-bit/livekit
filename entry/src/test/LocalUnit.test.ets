@@ -28,6 +28,7 @@ import {
   LIVEKIT_PUSH_GREEN,
   LIVEKIT_PUSH_RED,
   shouldAutoStopLiveKitPush,
+  shouldRenderLiveKitPreviewSurface,
   shouldStopLiveKitPush
 } from '../main/ets/push/LiveKitPushPolicy';
 
@@ -335,12 +336,15 @@ export default function localUnitTest() {
       expect(getLiveKitPushButtonText(true, false)).assertEqual('关闭直播推流');
       expect(getLiveKitPushButtonText(false, true)).assertEqual('推流中...');
       expect(getLiveKitPushButtonText(true, true)).assertEqual('关闭中...');
-      expect(getLiveKitPushButtonText(true, false, false)).assertEqual('直播推流中');
+      expect(getLiveKitPushButtonText(true, false, false, LIVEKIT_CAMERA_SOURCE_PHONE)).assertEqual('手机视频流推送中');
+      expect(getLiveKitPushButtonText(true, false, false, LIVEKIT_CAMERA_SOURCE_AI_GLASSES)).assertEqual('推送手机视频流');
+      expect(getLiveKitPushButtonText(true, true, false, LIVEKIT_CAMERA_SOURCE_AI_GLASSES)).assertEqual('切回手机中...');
 
       expect(getLiveKitPushButtonColor(false, false)).assertEqual(LIVEKIT_PUSH_GREEN);
       expect(getLiveKitPushButtonColor(true, false)).assertEqual(LIVEKIT_PUSH_RED);
       expect(getLiveKitPushButtonColor(false, true)).assertEqual(LIVEKIT_PUSH_DISABLED);
-      expect(getLiveKitPushButtonColor(true, false, false)).assertEqual(LIVEKIT_PUSH_DISABLED);
+      expect(getLiveKitPushButtonColor(true, false, false, LIVEKIT_CAMERA_SOURCE_PHONE)).assertEqual(LIVEKIT_PUSH_DISABLED);
+      expect(getLiveKitPushButtonColor(true, false, false, LIVEKIT_CAMERA_SOURCE_AI_GLASSES)).assertEqual(LIVEKIT_PUSH_GREEN);
     });
 
     it('togglesOnlyAfterPreviewSurfaceReady', 0, () => {
@@ -353,7 +357,8 @@ export default function localUnitTest() {
       expect(canClickLiveKitPushButton(false)).assertEqual(true);
       expect(canClickLiveKitPushButton(true)).assertEqual(false);
       expect(canClickLiveKitPushButton(false, false, false)).assertEqual(true);
-      expect(canClickLiveKitPushButton(false, true, false)).assertEqual(false);
+      expect(canClickLiveKitPushButton(false, true, false, LIVEKIT_CAMERA_SOURCE_PHONE)).assertEqual(false);
+      expect(canClickLiveKitPushButton(false, true, false, LIVEKIT_CAMERA_SOURCE_AI_GLASSES)).assertEqual(true);
     });
 
     it('changesPreviewComponentIdWhenRevisionIncrements', 0, () => {
@@ -363,6 +368,13 @@ export default function localUnitTest() {
       expect(first).assertEqual('livekit-preview-0');
       expect(second).assertEqual('livekit-preview-1');
       expect(first === second).assertEqual(false);
+    });
+
+    it('rendersPreviewSurfaceOnlyAfterPushStartsOrDuringBusyState', 0, () => {
+      expect(shouldRenderLiveKitPreviewSurface(false, false, false)).assertEqual(false);
+      expect(shouldRenderLiveKitPreviewSurface(true, false, false)).assertEqual(true);
+      expect(shouldRenderLiveKitPreviewSurface(false, true, false)).assertEqual(true);
+      expect(shouldRenderLiveKitPreviewSurface(false, false, true)).assertEqual(true);
     });
 
     it('stopsPushWhenNoKooPhoneLiveIsActive', 0, () => {
@@ -386,6 +398,8 @@ export default function localUnitTest() {
     it('keepsAiGlassesSwitchClickableWhenNotBusy', 0, () => {
       expect(canSwitchAiGlassesCamera(false)).assertEqual(true);
       expect(canSwitchAiGlassesCamera(true)).assertEqual(false);
+      expect(canSwitchAiGlassesCamera(false, true, LIVEKIT_CAMERA_SOURCE_PHONE)).assertEqual(true);
+      expect(canSwitchAiGlassesCamera(false, true, LIVEKIT_CAMERA_SOURCE_AI_GLASSES)).assertEqual(false);
     });
 
     it('labelsCurrentLiveKitCameraSource', 0, () => {

@@ -15,7 +15,6 @@ import {
 } from '../koophone/KooLiveSlotPolicy'
 import {
   buildLiveKitPreviewComponentId,
-  canClickLiveKitPushButton,
   canSwitchAiGlassesCamera,
   canSwitchPhoneCamera,
   getLiveKitCameraSourceLabel,
@@ -27,7 +26,8 @@ import {
   LIVEKIT_SWITCH_BLUE,
   LIVEKIT_SWITCH_GLASSES,
   LiveKitCameraSource,
-  shouldAutoStopLiveKitPush
+  shouldAutoStopLiveKitPush,
+  shouldRenderLiveKitPreviewSurface
 } from '../push/LiveKitPushPolicy'
 import {
   KooInputController,
@@ -45,16 +45,18 @@ enum LivePlatform {
   DOUYIN = 'douyin'
 }
 
-const KOOPHONE_AUTH_HOST = 'http://100.93.2.248:8669'
-const IAM_AUTH_URL = 'https://iam.cn-north-7.myhuaweicloud.com/v3/auth/tokens'
+const KOOPHONE_AUTH_HOST = '__KOOPHONE_AUTH_HOST__'
+const IAM_AUTH_URL = '__IAM_AUTH_URL__'
 const IAM_DOMAIN_NAME = '__IAM_DOMAIN_NAME__'
 const IAM_USER_NAME = '__IAM_USER_NAME__'
 const IAM_PASSWORD = '__IAM_PASSWORD__'
-const IAM_PROJECT_NAME = 'cn-north-7'
-const TAOBAO_INSTANCE_ID = 'dhb4q9j4'
-const DOUYIN_INSTANCE_ID = 'sKuBZq7c'
+const IAM_PROJECT_NAME = '__IAM_PROJECT_NAME__'
+const TAOBAO_INSTANCE_ID = '__TAOBAO_INSTANCE_ID__'
+const TAOBAO_BACKUP_INSTANCE_ID = '__TAOBAO_BACKUP_INSTANCE_ID__'
+const DOUYIN_INSTANCE_ID = '__DOUYIN_INSTANCE_ID__'
 const KOOPHONE_INSTANCE_POOL: KooInstancePoolEntry[] = [
   { id: TAOBAO_INSTANCE_ID },
+  { id: TAOBAO_BACKUP_INSTANCE_ID },
   { id: DOUYIN_INSTANCE_ID }
 ]
 
@@ -108,6 +110,11 @@ const LIVEKIT_EXPERIMENT_USE_GLASSES_CAMERA = true
 const LIVEKIT_EXPERIMENT_ALLOW_STANDALONE_PUSH = true
 const LIVEKIT_EXPERIMENT_GLASSES_CAMERA_DEVICE_ID =
   '__LIVEKIT_GLASSES_CAMERA_DEVICE_ID__'
+// AI 眼镜 remote camera 被拒绝后，连续重试会反复触发眼镜服务的强制回退。
+// 直播推流链路只做一次打开；失败时保留错误和诊断文本，避免把设备打进保护状态。
+const AI_GLASSES_PREVIEW_RETRY_DELAYS_MS: number[] = []
+const AI_GLASSES_CAPTURE_SURFACE_WAIT_ROUNDS = 28
+const AI_GLASSES_DISPLAY_CAPTURE_SETTLE_MS = 1200
 
 @Entry
 @Component
@@ -162,7 +169,10 @@ struct Index1 {
   @State liveKitErrorText: string = ''
   @State liveKitDiagnosticText: string = ''
   @State liveKitPreviewRevision: number = 0
+  @State liveKitPreviewVisible: boolean = false
+  @State aiGlassesDisplayCaptureFocused: boolean = false
   @State liveKitCameraSource: LiveKitCameraSource = LIVEKIT_CAMERA_SOURCE_PHONE
+  @State liveKitPhoneDeviceId: string = ''
 
   aboutToAppear(): void {
     this.attachPlatformPlayerHandlers(LivePlatform.TAOBAO)
@@ -385,11 +395,15 @@ struct Index1 {
    * 全局推流按钮入口：未推流时执行权限、SFU 建连、发布视频；已推流时执行关闭链路。
    */
   private async toggleLiveKitPush(): Promise<void> {
-    if (!canClickLiveKitPushButton(this.liveKitBusy, this.liveKitPushing, this.canStopLiveKitPush())) {
+    if (!this.canClickLiveKitMainButton()) {
       return
     }
 
     if (this.liveKitPushing) {
+      if (!this.canStopLiveKitPush()) {
+        this.switchLiveKitToPhoneCamera()
+        return
+      }
       this.stopLiveKitPush()
       return
     }
@@ -407,53 +421,81 @@ struct Index1 {
       return
     }
 
-    const surfaceId = await this.waitForLiveKitPreviewSurfaceId()
-    if (surfaceId.length === 0) {
-      this.liveKitErrorText = '本机摄像头预览 surface 未准备好'
-      return
-    }
-
     this.liveKitBusy = true
     this.liveKitErrorText = ''
+    this.liveKitPreviewVisible = true
+    const isAiGlassesSource = this.liveKitCameraSource === LIVEKIT_CAMERA_SOURCE_AI_GLASSES
+    this.aiGlassesDisplayCaptureFocused = false
     try {
-      const permissionGranted = await liveKitUtil.requestPermissions()
-      if (!permissionGranted) {
-        this.liveKitErrorText = liveKitUtil.errorMessage
+      const surfaceId = isAiGlassesSource ?
+        await this.prepareAiGlassesDisplayCaptureSurface('start') :
+        await this.waitForLiveKitPreviewSurfaceId()
+      if (surfaceId.length === 0) {
+        this.liveKitErrorText = '本机摄像头预览 surface 未准备好'
+        this.aiGlassesDisplayCaptureFocused = false
+        this.liveKitPreviewVisible = false
         return
       }
 
-      const deviceId = this.resolveLiveKitDeviceIdForCurrentSource()
-      this.liveKitDiagnosticText = glassesPreviewUtil.diagnosticText
-      if (deviceId.length === 0) {
-        this.liveKitErrorText = this.liveKitCameraSource === LIVEKIT_CAMERA_SOURCE_AI_GLASSES ?
-          '请先连接 AI 眼镜再切换摄像头' : '没有可用的本机摄像头'
-        if (this.liveKitCameraSource === LIVEKIT_CAMERA_SOURCE_AI_GLASSES) {
-          this.showAiGlassesMissingDialog()
-        }
+      const permissionGranted = await liveKitUtil.requestPermissions()
+      if (!permissionGranted) {
+        this.liveKitErrorText = liveKitUtil.errorMessage
+        this.aiGlassesDisplayCaptureFocused = false
+        this.liveKitPreviewVisible = false
         return
+      }
+
+      const deviceId = isAiGlassesSource ?
+        this.getLiveKitPreferredGlassesDeviceId() :
+        this.resolveLiveKitDeviceIdForCurrentSource()
+      this.liveKitDiagnosticText = glassesPreviewUtil.diagnosticText
+
+      if (isAiGlassesSource) {
+        this.liveKitErrorText = '正在打开 AI 眼镜预览...'
+        const previewStarted = await this.startAiGlassesPreviewWithRetry(surfaceId, deviceId)
+        if (!previewStarted) {
+          this.liveKitErrorText = glassesPreviewUtil.errorMessage
+          liveKitUtil.errorMessage = glassesPreviewUtil.errorMessage
+          this.aiGlassesDisplayCaptureFocused = false
+          this.liveKitPreviewVisible = false
+          return
+        }
+        this.liveKitErrorText = 'AI 眼镜预览已稳定，正在连接 SFU...'
       }
 
       const joined = await liveKitUtil.joinRoom(LIVEKIT_SFU_URL, LIVEKIT_SFU_TOKEN)
       if (!joined) {
         this.liveKitErrorText = liveKitUtil.errorMessage
         liveKitUtil.forceResetForNextPush()
+        await glassesPreviewUtil.stopPreview()
         this.resetLiveKitPreviewSurface()
+        this.aiGlassesDisplayCaptureFocused = false
+        this.liveKitPreviewVisible = false
         return
       }
 
-      const published = await liveKitUtil.publishVideo(surfaceId, deviceId)
+      const published = await this.publishLiveKitVideoForCurrentSource(surfaceId, deviceId)
       if (!published) {
         this.liveKitErrorText = liveKitUtil.errorMessage
         liveKitUtil.forceResetForNextPush()
+        await glassesPreviewUtil.stopPreview()
         this.resetLiveKitPreviewSurface()
+        this.aiGlassesDisplayCaptureFocused = false
+        this.liveKitPreviewVisible = false
         return
       }
 
       this.liveKitPushing = true
+      if (!isAiGlassesSource) {
+        this.liveKitPhoneDeviceId = deviceId
+      }
     } catch (error) {
       this.liveKitErrorText = String(error)
       liveKitUtil.forceResetForNextPush()
+      await glassesPreviewUtil.stopPreview()
       this.resetLiveKitPreviewSurface()
+      this.aiGlassesDisplayCaptureFocused = false
+      this.liveKitPreviewVisible = false
       this.liveKitPushing = false
     } finally {
       this.liveKitBusy = false
@@ -468,7 +510,13 @@ struct Index1 {
     if (this.liveKitCameraSource === LIVEKIT_CAMERA_SOURCE_AI_GLASSES) {
       return glassesPreviewUtil.resolveAiGlassesCameraId(this.getLiveKitPreferredGlassesDeviceId())
     }
-    return glassesPreviewUtil.resolvePreferredPhoneCameraId()
+    // 手机源也记录并传入 CameraKit 枚举出的 cameraId，避免折叠态/展开态前摄由 @ohos/webrtc 自行猜测。
+    const phoneDeviceId = glassesPreviewUtil.resolvePreferredPhoneCameraId()
+    if (phoneDeviceId.length > 0) {
+      this.liveKitPhoneDeviceId = phoneDeviceId
+    }
+    this.liveKitDiagnosticText = glassesPreviewUtil.diagnosticText
+    return phoneDeviceId
   }
 
   /**
@@ -485,11 +533,14 @@ struct Index1 {
     this.liveKitErrorText = ''
     try {
       liveKitUtil.forceResetForNextPush()
+      await glassesPreviewUtil.stopPreview()
     } catch (error) {
       this.liveKitErrorText = String(error)
     }
 
     this.resetLiveKitPreviewSurface()
+    this.aiGlassesDisplayCaptureFocused = false
+    this.liveKitPreviewVisible = false
     this.liveKitPushing = false
     this.liveKitBusy = false
 
@@ -504,6 +555,7 @@ struct Index1 {
    */
   private resetLiveKitPreviewSurface(): void {
     this.liveKitPreviewResetting = true
+    this.liveKitPreviewVisible = false
     this.liveKitPreviewReady = false
     this.liveKitSurfaceId = ''
     this.liveKitXCtrl = new XComponentController()
@@ -511,7 +563,7 @@ struct Index1 {
     setTimeout(() => {
       this.liveKitPreviewResetting = false
       this.refreshLiveKitPreviewSurfaceId()
-    }, 120)
+    }, 420)
   }
 
   /**
@@ -559,6 +611,180 @@ struct Index1 {
     return ''
   }
 
+  /**
+   * AI 眼镜兜底方案依赖屏幕采集当前应用窗口。双云机直播时旧的小预览 surface
+   * 可能仍被控制浮层持有，直接复用会让 CameraKit 绑定到即将销毁或不可见的 surface，
+   * SFU 端表现为黑屏。进入 AI 眼镜采集态时强制创建一个新的全屏 XComponent，
+   * 并等这个新 surface onLoad 后再启动 CameraKit 和屏幕采集。
+   */
+  private async prepareAiGlassesDisplayCaptureSurface(reason: string): Promise<string> {
+    console.info(`[Index1] Prepare AI glasses display capture surface: ${reason}`)
+    try {
+      await glassesPreviewUtil.stopPreview()
+    } catch (error) {
+      console.warn('[Index1] Stop stale AI glasses preview before capture skipped:', String(error))
+    }
+
+    this.liveKitPreviewResetting = true
+    this.liveKitPreviewVisible = true
+    this.aiGlassesDisplayCaptureFocused = true
+    this.liveKitPreviewReady = false
+    this.liveKitSurfaceId = ''
+    this.liveKitXCtrl = new XComponentController()
+    this.liveKitPreviewRevision++
+
+    await this.sleep(120)
+    this.liveKitPreviewResetting = false
+
+    for (let i = 0; i < AI_GLASSES_CAPTURE_SURFACE_WAIT_ROUNDS; i++) {
+      await this.sleep(120)
+      this.refreshLiveKitPreviewSurfaceId()
+      if (this.liveKitSurfaceId.length > 0) {
+        console.info('[Index1] AI glasses display capture surface ready:', this.liveKitSurfaceId)
+        return this.liveKitSurfaceId
+      }
+    }
+
+    console.error('[Index1] AI glasses display capture surface not ready')
+    return ''
+  }
+
+  /**
+   * 切换本机/AI 眼镜视频源时获取可用的本地预览 surface。
+   * 真机上切源时主动销毁 XComponent 后，新 surface 可能不会及时 onLoad，导致切到 AI 眼镜前失败。
+   * 因此优先复用当前已经在渲染的 surface；只有 surface 缺失时才等待现有组件补齐。
+   */
+  private async getLiveKitPreviewSurfaceForSourceSwitch(): Promise<string> {
+    this.refreshLiveKitPreviewSurfaceId()
+    if (this.liveKitSurfaceId.length > 0) {
+      console.info('[Index1] Reuse LiveKit preview surface for source switch:', this.liveKitSurfaceId)
+      return this.liveKitSurfaceId
+    }
+
+    console.info('[Index1] Wait existing LiveKit preview surface for source switch')
+    this.liveKitPreviewVisible = true
+
+    for (let i = 0; i < 20; i++) {
+      await this.sleep(120)
+      this.refreshLiveKitPreviewSurfaceId()
+      if (this.liveKitSurfaceId.length > 0) {
+        console.info('[Index1] Existing LiveKit preview surface ready:', this.liveKitSurfaceId)
+        return this.liveKitSurfaceId
+      }
+    }
+
+    return ''
+  }
+
+  /**
+   * 在同一个 LiveKit 房间内切换视频源。
+   * 顺序固定为：停发旧视频轨道 -> 等待相机释放 -> 复用当前 XComponent surface -> 按目标 deviceId 重新发布。
+   * 这避免了 Mate X7 + AI 眼镜场景下同时占用两路摄像头，也避免切源时等待新 surface 导致卡死。
+   */
+  private async replaceLiveKitVideoSourceWithFreshSurface(
+    deviceId: string,
+    targetLabel: LiveKitCameraSource
+  ): Promise<boolean> {
+    const isAiGlasses = targetLabel === LIVEKIT_CAMERA_SOURCE_AI_GLASSES
+    this.aiGlassesDisplayCaptureFocused = isAiGlasses
+    console.info(
+      '[Index1] Replace LiveKit video source with fresh surface:',
+      isAiGlasses ? 'ai_glasses' : 'phone'
+    )
+
+    const unpublished = await liveKitUtil.unpublishVideo()
+    if (!unpublished) {
+      this.aiGlassesDisplayCaptureFocused = false
+      this.liveKitErrorText = liveKitUtil.errorMessage
+      console.error('[Index1] Replace LiveKit source failed at unpublish:', liveKitUtil.errorMessage)
+      return false
+    }
+
+    await this.sleep(isAiGlasses ? 400 : 800)
+    const surfaceId = isAiGlasses ?
+      await this.prepareAiGlassesDisplayCaptureSurface('switch') :
+      await this.getLiveKitPreviewSurfaceForSourceSwitch()
+    if (surfaceId.length === 0) {
+      this.aiGlassesDisplayCaptureFocused = false
+      this.liveKitErrorText = '本机摄像头预览 surface 未准备好'
+      console.error('[Index1] Replace LiveKit source failed: surface not ready')
+      return false
+    }
+
+    const published = await this.publishLiveKitVideoForSwitch(surfaceId, deviceId, targetLabel)
+    if (!published) {
+      this.aiGlassesDisplayCaptureFocused = false
+      this.liveKitErrorText = liveKitUtil.errorMessage
+      console.error('[Index1] Replace LiveKit source failed at publish:', liveKitUtil.errorMessage)
+      return false
+    }
+
+    return true
+  }
+
+  private async publishLiveKitVideoForCurrentSource(surfaceId: string, deviceId: string): Promise<boolean> {
+    return this.publishLiveKitVideoForSwitch(surfaceId, deviceId, this.liveKitCameraSource)
+  }
+
+  /**
+   * 按目标视频源发布 LiveKit 视频。
+   * 手机源走 @ohos/webrtc 摄像头 Track；AI 眼镜当前无法被 @ohos/webrtc 枚举为 videoinput，
+   * 因此兜底为 CameraKit 先渲染眼镜预览，再发布屏幕采集 Track。
+   */
+  private async publishLiveKitVideoForSwitch(
+    surfaceId: string,
+    deviceId: string,
+    targetLabel: LiveKitCameraSource
+  ): Promise<boolean> {
+    if (targetLabel === LIVEKIT_CAMERA_SOURCE_AI_GLASSES) {
+      if (!glassesPreviewUtil.isPreviewing) {
+        const previewStarted = await this.startAiGlassesPreviewWithRetry(surfaceId, deviceId)
+        if (!previewStarted) {
+          liveKitUtil.errorMessage = glassesPreviewUtil.errorMessage
+          return false
+        }
+      } else {
+        console.info('[Index1] Reuse stable AI glasses CameraKit preview for display fallback')
+      }
+      this.liveKitErrorText = 'AI 眼镜预览已打开，正在通过屏幕采集推送到 SFU...'
+      await this.sleep(AI_GLASSES_DISPLAY_CAPTURE_SETTLE_MS)
+      return liveKitUtil.publishDisplayVideo()
+    }
+
+    await glassesPreviewUtil.stopPreview()
+    this.aiGlassesDisplayCaptureFocused = false
+    return liveKitUtil.publishVideo(surfaceId, deviceId)
+  }
+
+  /**
+   * AI 眼镜 remote camera 首次启动会拉起分布式相机链路，真机上偶发在
+   * commitConfig 阶段返回 7400201。这里按完整 CameraKit 会话重建做少量重试，
+   * 每次都会重新枚举 AI Glasses CameraDevice 并重新 createCameraInput。
+   */
+  private async startAiGlassesPreviewWithRetry(surfaceId: string, deviceId: string): Promise<boolean> {
+    for (let attempt = 0; attempt <= AI_GLASSES_PREVIEW_RETRY_DELAYS_MS.length; attempt++) {
+      console.info(`[Index1] Start AI glasses CameraKit preview attempt ${attempt + 1}`)
+      const previewStarted = await glassesPreviewUtil.startPreview(surfaceId, deviceId)
+      this.liveKitDiagnosticText = glassesPreviewUtil.diagnosticText
+      if (previewStarted) {
+        return true
+      }
+
+      if (attempt >= AI_GLASSES_PREVIEW_RETRY_DELAYS_MS.length) {
+        break
+      }
+
+      const delayMs = AI_GLASSES_PREVIEW_RETRY_DELAYS_MS[attempt]
+      console.warn(
+        `[Index1] AI glasses preview attempt ${attempt + 1} failed, retry after ${delayMs}ms:`,
+        glassesPreviewUtil.errorMessage
+      )
+      await this.sleep(delayMs)
+    }
+
+    return false
+  }
+
   private sleep(durationMs: number): Promise<void> {
     return new Promise((resolve: () => void) => {
       setTimeout(() => {
@@ -575,15 +801,12 @@ struct Index1 {
       return
     }
 
+    console.info('[Index1] Switch phone camera clicked')
     this.liveKitBusy = true
-    this.liveKitErrorText = ''
+    this.liveKitErrorText = '正在切换手机摄像头...'
+    this.aiGlassesDisplayCaptureFocused = false
+    this.liveKitPreviewVisible = true
     try {
-      const surfaceId = await this.waitForLiveKitPreviewSurfaceId()
-      if (surfaceId.length === 0) {
-        this.liveKitErrorText = '本机摄像头预览 surface 未准备好'
-        return
-      }
-
       const nextDeviceId = glassesPreviewUtil.resolveNextPhoneCameraId(liveKitUtil.currentVideoDeviceId)
       this.liveKitDiagnosticText = glassesPreviewUtil.diagnosticText
       if (nextDeviceId.length === 0) {
@@ -591,14 +814,19 @@ struct Index1 {
         return
       }
 
-      const switched = await liveKitUtil.replaceVideoSource(surfaceId, nextDeviceId)
+      const switched = await this.replaceLiveKitVideoSourceWithFreshSurface(
+        nextDeviceId,
+        LIVEKIT_CAMERA_SOURCE_PHONE
+      )
       if (!switched) {
-        this.liveKitErrorText = liveKitUtil.errorMessage
+        this.resetLiveKitAfterSwitchFailure()
         return
       }
 
       this.liveKitCameraSource = LIVEKIT_CAMERA_SOURCE_PHONE
-      this.liveKitErrorText = ''
+      this.aiGlassesDisplayCaptureFocused = false
+      this.liveKitPhoneDeviceId = nextDeviceId
+      this.liveKitErrorText = '已切换手机摄像头'
     } finally {
       this.liveKitBusy = false
     }
@@ -608,47 +836,84 @@ struct Index1 {
    * 切换到 AI 眼镜摄像头。未推流时只做源预选；已推流时在当前 SFU 房间内替换视频轨道。
    */
   private async switchLiveKitToAiGlassesCamera(): Promise<void> {
-    if (!canSwitchAiGlassesCamera(this.liveKitBusy)) {
+    if (!canSwitchAiGlassesCamera(this.liveKitBusy, this.liveKitPushing, this.liveKitCameraSource)) {
       return
     }
 
+    console.info('[Index1] Push AI glasses video clicked')
     this.liveKitBusy = true
-    this.liveKitErrorText = ''
+    this.liveKitErrorText = '正在切换到 AI 眼镜视频流...'
     try {
-      const permissionGranted = await liveKitUtil.requestPermissions()
-      if (!permissionGranted) {
-        this.liveKitErrorText = liveKitUtil.errorMessage
+      if (this.liveKitCameraSource === LIVEKIT_CAMERA_SOURCE_PHONE && liveKitUtil.currentVideoDeviceId.length > 0) {
+        this.liveKitPhoneDeviceId = liveKitUtil.currentVideoDeviceId
+      }
+
+      if (!this.liveKitPushing) {
+        this.liveKitCameraSource = LIVEKIT_CAMERA_SOURCE_AI_GLASSES
+        this.liveKitErrorText = ''
+        this.liveKitBusy = false
+        await this.startLiveKitPush()
         return
       }
 
-      const deviceId = glassesPreviewUtil.resolveAiGlassesCameraId(this.getLiveKitPreferredGlassesDeviceId())
-      this.liveKitDiagnosticText = glassesPreviewUtil.diagnosticText
-      if (deviceId.length === 0) {
-        this.liveKitErrorText = glassesPreviewUtil.errorMessage.length > 0 ?
-          glassesPreviewUtil.errorMessage : '请先连接 AI 眼镜再切换摄像头'
-        this.showAiGlassesMissingDialog()
+      console.info('[Index1] Replacing LiveKit video source with AI glasses camera')
+      const switched = await this.replaceLiveKitVideoSourceWithFreshSurface(
+        this.getLiveKitPreferredGlassesDeviceId(),
+        LIVEKIT_CAMERA_SOURCE_AI_GLASSES
+      )
+      if (!switched) {
+        this.resetLiveKitAfterSwitchFailure()
         return
       }
 
       this.liveKitCameraSource = LIVEKIT_CAMERA_SOURCE_AI_GLASSES
-      if (!this.liveKitPushing) {
-        this.liveKitErrorText = '已选择 AI 眼镜摄像头，点击开始直播推流后生效'
+      this.aiGlassesDisplayCaptureFocused = true
+      this.liveKitErrorText = '已切换到 AI 眼镜视频流'
+    } finally {
+      this.liveKitBusy = false
+    }
+  }
+
+  /**
+   * 从 AI 眼镜视频流切回 Mate X7 本机摄像头。
+   * 优先复用开始手机推流时记录的 cameraId；如果折叠态变化导致该 cameraId 不再可用，则重新枚举当前本机摄像头。
+   */
+  private async switchLiveKitToPhoneCamera(): Promise<void> {
+    if (this.liveKitBusy || !this.liveKitPushing || this.liveKitCameraSource === LIVEKIT_CAMERA_SOURCE_PHONE) {
+      return
+    }
+
+    this.liveKitBusy = true
+    this.liveKitErrorText = '正在切换到手机视频流...'
+    this.aiGlassesDisplayCaptureFocused = false
+    this.liveKitPreviewVisible = true
+    try {
+      let phoneDeviceId = this.liveKitPhoneDeviceId.trim()
+      if (phoneDeviceId.length === 0) {
+        phoneDeviceId = glassesPreviewUtil.resolvePreferredPhoneCameraId()
+      }
+      this.liveKitDiagnosticText = glassesPreviewUtil.diagnosticText
+      if (phoneDeviceId.length === 0) {
+        this.liveKitErrorText = glassesPreviewUtil.errorMessage.length > 0 ?
+          glassesPreviewUtil.errorMessage : '没有可用的本机摄像头'
         return
       }
 
-      const surfaceId = await this.waitForLiveKitPreviewSurfaceId()
-      if (surfaceId.length === 0) {
-        this.liveKitErrorText = '本机摄像头预览 surface 未准备好'
-        return
-      }
-
-      const switched = await liveKitUtil.replaceVideoSource(surfaceId, deviceId)
+      console.info('[Index1] Replacing LiveKit video source with phone camera')
+      const switched = await this.replaceLiveKitVideoSourceWithFreshSurface(
+        phoneDeviceId,
+        LIVEKIT_CAMERA_SOURCE_PHONE
+      )
       if (!switched) {
-        this.liveKitErrorText = liveKitUtil.errorMessage
+        this.liveKitPhoneDeviceId = ''
+        this.resetLiveKitAfterSwitchFailure()
         return
       }
 
-      this.liveKitErrorText = ''
+      this.liveKitCameraSource = LIVEKIT_CAMERA_SOURCE_PHONE
+      this.aiGlassesDisplayCaptureFocused = false
+      this.liveKitPhoneDeviceId = phoneDeviceId
+      this.liveKitErrorText = '已切换到手机视频流'
     } finally {
       this.liveKitBusy = false
     }
@@ -663,6 +928,15 @@ struct Index1 {
         action: () => {}
       }
     })
+  }
+
+  private resetLiveKitAfterSwitchFailure(): void {
+    liveKitUtil.forceResetForNextPush()
+    this.resetLiveKitPreviewSurface()
+    this.aiGlassesDisplayCaptureFocused = false
+    this.liveKitPreviewVisible = false
+    this.liveKitPushing = false
+    this.liveKitCameraSource = LIVEKIT_CAMERA_SOURCE_PHONE
   }
 
   private resetPlatformRuntime(platform: LivePlatform): void {
@@ -1712,8 +1986,6 @@ struct Index1 {
         right: this.getPagePadding(),
         bottom: 36
       })
-
-      this.liveKitPushOverlay()
     }
     .width('100%')
     .height('100%')
@@ -1792,15 +2064,48 @@ struct Index1 {
   }
 
   private getLiveKitPreviewWidth(): number {
+    if (this.isAiGlassesDisplayCaptureFocused()) {
+      return this.rootWidth > 0 ? this.rootWidth : 720
+    }
     return this.isExpandedScreen() ? 92 : 76
   }
 
   private getLiveKitPreviewHeight(): number {
+    if (this.isAiGlassesDisplayCaptureFocused()) {
+      return this.rootHeight > 0 ? this.rootHeight : 1280
+    }
     return this.isExpandedScreen() ? 130 : 108
   }
 
+  private isAiGlassesDisplayCaptureFocused(): boolean {
+    return this.aiGlassesDisplayCaptureFocused && this.liveKitCameraSource === LIVEKIT_CAMERA_SOURCE_AI_GLASSES
+  }
+
+  private restoreAiGlassesDisplayControls(): void {
+    if (!this.isAiGlassesDisplayCaptureFocused()) {
+      return
+    }
+    this.aiGlassesDisplayCaptureFocused = false
+    this.liveKitErrorText = '已恢复控制面板，AI 眼镜推流仍在继续'
+  }
+
+  private shouldRenderLiveKitPreviewSurface(): boolean {
+    if (this.liveKitPreviewResetting) {
+      return false
+    }
+    return shouldRenderLiveKitPreviewSurface(this.liveKitPreviewVisible, this.liveKitPushing, this.liveKitBusy)
+  }
+
+  private getLiveKitControlWidth(): number {
+    return 230
+  }
+
   private getLiveKitPushOverlayWidth(): number {
-    return this.getLiveKitPreviewWidth() + 8 + 230 + 14
+    const controlWidth = this.getLiveKitControlWidth()
+    if (!this.shouldRenderLiveKitPreviewSurface()) {
+      return controlWidth + 14
+    }
+    return this.getLiveKitPreviewWidth() + 8 + controlWidth + 14
   }
 
   private getLiveKitPushOverlayX(): number {
@@ -1820,7 +2125,45 @@ struct Index1 {
   }
 
   private getLiveKitActionButtonText(): string {
-    return getLiveKitPushButtonText(this.liveKitPushing, this.liveKitBusy, this.canStopLiveKitPush())
+    return getLiveKitPushButtonText(
+      this.liveKitPushing,
+      this.liveKitBusy,
+      this.canStopLiveKitPush(),
+      this.liveKitCameraSource
+    )
+  }
+
+  private canClickLiveKitMainButton(): boolean {
+    if (this.liveKitBusy) {
+      return false
+    }
+    if (!this.liveKitPushing) {
+      return true
+    }
+    if (this.canStopLiveKitPush()) {
+      return true
+    }
+    return this.liveKitCameraSource === LIVEKIT_CAMERA_SOURCE_AI_GLASSES
+  }
+
+  private getLiveKitMainButtonColor(): string {
+    return getLiveKitPushButtonColor(
+      this.liveKitPushing,
+      this.liveKitBusy,
+      this.canStopLiveKitPush(),
+      this.liveKitCameraSource
+    )
+  }
+
+  private getLiveKitAiGlassesButtonText(): string {
+    if (this.liveKitPushing && this.liveKitCameraSource === LIVEKIT_CAMERA_SOURCE_AI_GLASSES) {
+      return 'AI眼镜视频流推送中'
+    }
+    return '推送AI眼镜视频流'
+  }
+
+  private canClickLiveKitAiGlassesButton(): boolean {
+    return canSwitchAiGlassesCamera(this.liveKitBusy, this.liveKitPushing, this.liveKitCameraSource)
   }
 
   private getLiveKitPreferredGlassesDeviceId(): string {
@@ -1857,20 +2200,25 @@ struct Index1 {
       .height('100%')
       .backgroundColor(Color.Black)
       .onLoad(() => {
-        this.liveKitSurfaceId = this.liveKitXCtrl.getXComponentSurfaceId()
-        this.liveKitPreviewReady = true
-        console.info('[Index1] LiveKit local preview loaded, surfaceId:', this.liveKitSurfaceId)
+        const surfaceId = this.liveKitXCtrl.getXComponentSurfaceId()
+        setTimeout(() => {
+          this.liveKitSurfaceId = surfaceId
+          this.liveKitPreviewReady = true
+          console.info('[Index1] LiveKit local preview loaded, surfaceId:', this.liveKitSurfaceId)
+        }, 0)
       })
       .onDestroy(() => {
-        this.liveKitPreviewReady = false
-        this.liveKitSurfaceId = ''
-        if (this.liveKitPreviewResetting) {
-          return
-        }
-        this.stopLiveKitPushForLifecycle()
+        setTimeout(() => {
+          this.liveKitPreviewReady = false
+          this.liveKitSurfaceId = ''
+          if (this.liveKitPreviewResetting || this.liveKitPushing || this.liveKitBusy || glassesPreviewUtil.isPreviewing) {
+            return
+          }
+          this.stopLiveKitPushForLifecycle()
+        }, 0)
       })
 
-      if (!this.liveKitPushing) {
+      if (!this.liveKitPushing && !this.isAiGlassesDisplayCaptureFocused()) {
         Text(this.getLiveKitPreviewLabel())
           .fontSize(9)
           .fontColor('#DDE3EA')
@@ -1880,9 +2228,9 @@ struct Index1 {
     .width(this.getLiveKitPreviewWidth())
     .height(this.getLiveKitPreviewHeight())
     .backgroundColor(Color.Black)
-    .borderRadius(6)
+    .borderRadius(this.isAiGlassesDisplayCaptureFocused() ? 0 : 6)
     .clip(true)
-    .border({ width: 1, color: '#66FFFFFF' })
+    .border({ width: this.isAiGlassesDisplayCaptureFocused() ? 0 : 1, color: '#66FFFFFF' })
   }
 
   /**
@@ -1901,8 +2249,8 @@ struct Index1 {
     .height(30)
     .justifyContent(FlexAlign.Center)
     .borderRadius(15)
-    .backgroundColor(getLiveKitPushButtonColor(this.liveKitPushing, this.liveKitBusy, this.canStopLiveKitPush()))
-    .opacity(canClickLiveKitPushButton(this.liveKitBusy, this.liveKitPushing, this.canStopLiveKitPush()) ? 1 : 0.58)
+    .backgroundColor(this.getLiveKitMainButtonColor())
+    .opacity(this.canClickLiveKitMainButton() ? 1 : 0.58)
     .onClick(() => {
       this.toggleLiveKitPush()
     })
@@ -1937,18 +2285,18 @@ struct Index1 {
   @Builder
   liveKitSwitchAiGlassesButton() {
     Row() {
-      Text('切换AI眼镜摄像头')
+      Text(this.getLiveKitAiGlassesButtonText())
         .fontSize(9)
         .fontWeight(FontWeight.Medium)
         .fontColor(Color.White)
         .maxLines(1)
     }
-    .width(118)
+    .width(140)
     .height(30)
     .justifyContent(FlexAlign.Center)
     .borderRadius(15)
     .backgroundColor(LIVEKIT_SWITCH_GLASSES)
-    .opacity(canSwitchAiGlassesCamera(this.liveKitBusy) ? 1 : 0.42)
+    .opacity(this.canClickLiveKitAiGlassesButton() ? 1 : 0.42)
     .onClick(() => {
       this.switchLiveKitToAiGlassesCamera()
     })
@@ -1961,7 +2309,9 @@ struct Index1 {
   @Builder
   liveKitPushOverlay() {
     Row({ space: 8 }) {
-      this.liveKitPreviewSurface()
+      if (this.shouldRenderLiveKitPreviewSurface()) {
+        this.liveKitPreviewSurface()
+      }
 
       Column({ space: 6 }) {
         Row({ space: 6 }) {
@@ -1993,16 +2343,45 @@ struct Index1 {
             .width(230)
         }
       }
-      .width(230)
+      .width(this.getLiveKitControlWidth())
       .justifyContent(FlexAlign.Center)
     }
     .width(this.getLiveKitPushOverlayWidth())
-    .height(this.getLiveKitPreviewHeight() + 16)
+    .height(this.shouldRenderLiveKitPreviewSurface() ? this.getLiveKitPreviewHeight() + 16 : 112)
     .padding({ top: 6, right: 8, bottom: 6, left: 6 })
     .backgroundColor(LIVEKIT_PANEL_BACKGROUND)
     .borderRadius(8)
-    .position({ x: this.getLiveKitPushOverlayX(), y: 8 })
+    .position({ x: this.getLiveKitPushOverlayX(), y: 150 })
     .zIndex(60)
+  }
+
+  /**
+   * AI 眼镜兜底推流专用画布。
+   * @ohos/webrtc 只能采集整屏/指定窗口，不能直接裁剪 XComponent 区域；
+   * 因此推 AI 眼镜时让页面只显示 CameraKit 预览 surface，屏幕采集得到的就是预览视频。
+   */
+  @Builder
+  aiGlassesDisplayCapturePage() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      this.liveKitPreviewSurface()
+
+      // 隐形控制区：误触概率低，点击后恢复按钮面板；透明显示，避免污染 SFU 画面。
+      Text('')
+        .width(140)
+        .height(120)
+        .position({
+          x: this.rootWidth > 160 ? this.rootWidth - 150 : 20,
+          y: this.rootHeight > 140 ? this.rootHeight - 130 : 20
+        })
+        .opacity(0.01)
+        .zIndex(20)
+        .onClick(() => {
+          this.restoreAiGlassesDisplayControls()
+        })
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor(Color.Black)
   }
 
   private getLiveSlotX(platform: LivePlatform): number {
@@ -2290,30 +2669,34 @@ struct Index1 {
   @Builder
   liveContent() {
     Stack({ alignContent: Alignment.TopStart }) {
-      this.liveSurfaceLayer(LivePlatform.TAOBAO)
-      this.liveSurfaceLayer(LivePlatform.DOUYIN)
-      this.liveTouchProxyLayer(LivePlatform.TAOBAO)
-      this.liveTouchProxyLayer(LivePlatform.DOUYIN)
-
-      if (this.isExpandedScreen()) {
-        this.inactiveLiveSlotLayer(LivePlatform.TAOBAO)
-        this.inactiveLiveSlotLayer(LivePlatform.DOUYIN)
-
-        if (this.isPlatformLiveActive(LivePlatform.TAOBAO)) {
-          this.liveControlLayer(LivePlatform.TAOBAO, false)
-        }
-        if (this.isPlatformLiveActive(LivePlatform.DOUYIN)) {
-          this.liveControlLayer(LivePlatform.DOUYIN, false)
-        }
-      } else if (this.isPlatformLiveActive(this.getFoldedSlotPlatform())) {
-        this.liveControlLayer(this.getFoldedDisplayPlatform(), this.shouldShowFoldedSwitch())
+      if (this.isAiGlassesDisplayCaptureFocused()) {
+        this.aiGlassesDisplayCapturePage()
       } else {
-        this.inactiveLiveSlotLayer(this.getFoldedSlotPlatform())
-      }
+        this.liveSurfaceLayer(LivePlatform.TAOBAO)
+        this.liveSurfaceLayer(LivePlatform.DOUYIN)
+        this.liveTouchProxyLayer(LivePlatform.TAOBAO)
+        this.liveTouchProxyLayer(LivePlatform.DOUYIN)
 
-      this.failureControlLayer(LivePlatform.TAOBAO)
-      this.failureControlLayer(LivePlatform.DOUYIN)
-      this.liveKitPushOverlay()
+        if (this.isExpandedScreen()) {
+          this.inactiveLiveSlotLayer(LivePlatform.TAOBAO)
+          this.inactiveLiveSlotLayer(LivePlatform.DOUYIN)
+
+          if (this.isPlatformLiveActive(LivePlatform.TAOBAO)) {
+            this.liveControlLayer(LivePlatform.TAOBAO, false)
+          }
+          if (this.isPlatformLiveActive(LivePlatform.DOUYIN)) {
+            this.liveControlLayer(LivePlatform.DOUYIN, false)
+          }
+        } else if (this.isPlatformLiveActive(this.getFoldedSlotPlatform())) {
+          this.liveControlLayer(this.getFoldedDisplayPlatform(), this.shouldShowFoldedSwitch())
+        } else {
+          this.inactiveLiveSlotLayer(this.getFoldedSlotPlatform())
+        }
+
+        this.failureControlLayer(LivePlatform.TAOBAO)
+        this.failureControlLayer(LivePlatform.DOUYIN)
+        this.liveKitPushOverlay()
+      }
     }
     .width('100%')
     .height('100%')
@@ -2330,7 +2713,9 @@ struct Index1 {
 
   build() {
     Column() {
-      if (this.isLiveStarted) {
+      if (this.isAiGlassesDisplayCaptureFocused()) {
+        this.aiGlassesDisplayCapturePage()
+      } else if (this.isLiveStarted) {
         this.livePage()
       } else {
         this.selectionPage()

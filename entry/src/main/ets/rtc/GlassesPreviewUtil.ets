@@ -4,12 +4,14 @@ import { camera } from '@kit.CameraKit'
 
 // CameraKit 文档中的 CAMERA_CONNECTION_REMOTE 枚举值，保留数值兜底是为了兼容真机日志和 ArkTS 枚举比较。
 const REMOTE_CAMERA_CONNECTION_TYPE = 2
-// AI 眼镜预览按视频场景创建会话，真机诊断里该枚举值为 2。
+// AI 眼镜最终用于直播推流，预览会话保持 NORMAL_VIDEO，避免本地诊断模式和真实业务模式不一致。
 const GLASSES_PREVIEW_SCENE_MODE = camera.SceneMode.NORMAL_VIDEO
 // CameraDevice.hostDeviceName 返回的眼镜主机名；它是反参筛选条件，不是传给 CameraKit 的入参。
 const AI_GLASSES_HOST_NAME = 'AI Glasses'
 // 真机抓日志使用的稳定前缀，便于从 hilog 中精确抽取 entry 侧 CameraKit 入参/反参。
 const AI_GLASS_LOG_PREFIX = '[AI_GLASS_DBG]'
+// AI 眼镜 CameraInput 的 error 是异步回调；会话 start 成功后必须稳定 2 秒再进入 SFU 推流。
+const GLASSES_PREVIEW_STABLE_CHECK_DELAY_MS = 2000
 
 interface CameraPositionQueryCase {
   name: string
@@ -35,6 +37,8 @@ class GlassesPreviewUtil {
   private cameraInput: camera.CameraInput | null = null
   private previewOutput: camera.PreviewOutput | null = null
   private session: camera.Session | null = null
+  private startupCameraInputErrorCode: number = 0
+  private startupCameraInputErrorMessage: string = ''
 
   /**
    * 打开当前系统已注册的 remote camera 本地预览。
@@ -62,7 +66,7 @@ class GlassesPreviewUtil {
     }
 
     // 从 CameraKit 返回的 remote camera 列表中解析要使用的 AI Glasses CameraDevice。
-    const cameraDevice = this.resolveRemoteCamera(preferredDeviceId)
+    const cameraDevice = this.resolveRemoteCamera(preferredDeviceId, false)
     // 如果系统当前没有暴露 AI Glasses remote camera，就停止本次预览。
     if (!cameraDevice) {
       // resolveRemoteCamera 会记录“没有 CAMERA_CONNECTION_REMOTE 返回眼镜摄像头”等诊断。
@@ -73,6 +77,8 @@ class GlassesPreviewUtil {
     await this.stopPreview()
 
     try {
+      this.startupCameraInputErrorCode = 0
+      this.startupCameraInputErrorMessage = ''
       // 创建 CameraManager；后续所有 CameraKit 枚举、输入、输出、会话都从它发起。
       const cameraManager = camera.getCameraManager(this.context)
       // 注册 CameraManager cameraStatus 回调，记录系统上报的 cameraId/status。
@@ -81,6 +87,8 @@ class GlassesPreviewUtil {
       this.appendDiagnosticLine(`createCameraInput(cameraDevice): id=${this.maskDeviceId(cameraDevice.cameraId)}`)
       // 使用 CameraDevice 创建 CameraInput；这是把 AI Glasses remote device 真正交给 CameraKit 的关键调用。
       const cameraInput = cameraManager.createCameraInput(cameraDevice)
+      // 立即保存 CameraInput 引用，后续任一步失败时 catch -> stopPreview() 能释放半初始化资源。
+      this.cameraInput = cameraInput
       // 注册 CameraInput 错误与遮挡检测回调，观察 AI 眼镜/CameraKit 是否把隐私灯问题透回应用层。
       this.registerCameraInputLoggers(cameraInput, cameraDevice)
       // 打开 CameraInput；真机上这一步会触发 AI 眼镜本体的摄像头启用流程。
@@ -97,10 +105,14 @@ class GlassesPreviewUtil {
       )
       // 创建预览输出，把 CameraKit 输出绑定到 ArkUI XComponent surface。
       const previewOutput = cameraManager.createPreviewOutput(previewProfile, surfaceId)
+      // 立即保存 PreviewOutput 引用，避免 commit/start 失败后无法释放 surface 输出。
+      this.previewOutput = previewOutput
       // 诊断记录：当前使用普通视频会话 NORMAL_VIDEO，数值为 2。
       this.appendDiagnosticLine(`createSession(mode): NORMAL_VIDEO=${Number(GLASSES_PREVIEW_SCENE_MODE)}`)
       // 创建 VideoSession，用于把输入 cameraInput 和输出 previewOutput 配成一条相机预览管线。
       const session = cameraManager.createSession(GLASSES_PREVIEW_SCENE_MODE) as camera.VideoSession
+      // 立即保存 Session 引用，保证后续异步错误和异常路径都能 stop/release。
+      this.session = session
       // 开始配置相机会话；beginConfig 和 commitConfig 之间只能做 addInput/addOutput 等配置动作。
       session.beginConfig()
       // 把 AI Glasses remote CameraInput 加入会话。
@@ -116,12 +128,18 @@ class GlassesPreviewUtil {
       // 诊断记录：session.start 成功，说明 CameraKit 链路已经跑到系统相机会话层。
       this.appendDiagnosticLine('session.start(): success')
 
-      // 保存 CameraInput 引用，后续停止预览时需要 close。
-      this.cameraInput = cameraInput
-      // 保存 PreviewOutput 引用，后续停止预览时需要 release。
-      this.previewOutput = previewOutput
-      // 保存 Session 引用，后续停止预览时需要 stop/release。
-      this.session = session
+      // 眼镜服务可能在 session.start 成功后马上通过 CameraInput error 回调拒绝 remote camera。
+      // 如果这里不等待，会把已经被强制切回本机的 session 误判为 AI 眼镜预览成功。
+      this.appendDiagnosticLine(`stableCheck(${GLASSES_PREVIEW_STABLE_CHECK_DELAY_MS}ms): begin`)
+      await this.sleep(GLASSES_PREVIEW_STABLE_CHECK_DELAY_MS)
+      if (this.startupCameraInputErrorCode !== 0) {
+        throw new Error(
+          `AI 眼镜 CameraInput 异步错误 code=${this.startupCameraInputErrorCode}, ` +
+            `message=${this.startupCameraInputErrorMessage}，眼镜服务可能已拒绝 remote camera 并强制切回本机摄像头`
+        )
+      }
+      this.appendDiagnosticLine('stableCheck: success')
+
       // 标记页面当前处于预览状态，用于按钮文案和状态切换。
       this.isPreviewing = true
       // 清空错误文案，避免成功后继续展示旧错误。
@@ -132,9 +150,9 @@ class GlassesPreviewUtil {
       return true
     } catch (error) {
       // 任意 CameraKit 调用失败时，把错误透出到页面。
-      this.errorMessage = `打开眼镜预览失败：${String(error)}`
+      this.errorMessage = `打开眼镜预览失败：${this.formatError(error)}`
       // 输出失败日志，保留具体 CameraKit 错误信息。
-      console.error('[GlassesPreviewUtil] CameraKit startPreview failed:', error)
+      console.error('[GlassesPreviewUtil] CameraKit startPreview failed:', this.formatError(error))
       // 失败后释放半初始化资源，避免相机输入或 surface 泄漏。
       await this.stopPreview()
       // 返回失败给页面，页面保持“开始眼镜预览”状态。
@@ -191,7 +209,7 @@ class GlassesPreviewUtil {
    */
   resolveAiGlassesCameraId(preferredDeviceId: string = ''): string {
     this.diagnosticText = `resolveAiGlassesCameraId: preferredDeviceId=${this.maskDeviceId(preferredDeviceId)}`
-    const cameraDevice = this.resolveRemoteCamera(preferredDeviceId)
+    const cameraDevice = this.resolveRemoteCamera(preferredDeviceId, false)
     if (!cameraDevice) {
       return ''
     }
@@ -234,15 +252,16 @@ class GlassesPreviewUtil {
   resolveNextPhoneCameraId(currentDeviceId: string): string {
     try {
       const cameraManager = camera.getCameraManager(this.context)
-      const phoneCameras = this.getLocalPhoneCameras(cameraManager)
+      const phoneCameras = this.getSwitchablePhoneCameras(cameraManager)
       this.logCameraDeviceList('getSupportedCameras.phoneSwitchCandidates', phoneCameras)
+      this.updatePhoneSwitchDiagnostics(phoneCameras)
       if (phoneCameras.length === 0) {
         this.errorMessage = '没有可切换的本机摄像头'
         return ''
       }
       if (phoneCameras.length === 1) {
         this.errorMessage = '当前只有一个可用的本机摄像头'
-        return phoneCameras[0].cameraId
+        return ''
       }
 
       const normalizedCurrent = currentDeviceId.trim()
@@ -256,8 +275,12 @@ class GlassesPreviewUtil {
 
       const nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % phoneCameras.length
       const nextCamera = phoneCameras[nextIndex]
+      if (nextCamera.cameraId === normalizedCurrent) {
+        this.errorMessage = '当前没有不同于现有视频源的本机摄像头'
+        return ''
+      }
       this.errorMessage = ''
-      this.diagnosticText = `switch phone camera: ${this.describeCameraDevice('phone', nextIndex, nextCamera)}`
+      this.appendDiagnosticLine(`switch phone camera selected: ${this.describeCameraDevice('phone', nextIndex, nextCamera)}`)
       console.info(`${AI_GLASS_LOG_PREFIX} switch phone camera ${this.describeCameraDevice('phone', nextIndex, nextCamera)}`)
       return nextCamera.cameraId
     } catch (error) {
@@ -268,21 +291,37 @@ class GlassesPreviewUtil {
   }
 
   /**
-   * 只请求摄像头权限。眼镜本地预览不需要麦克风，也不需要连接 SFU。
+   * 请求 AI 眼镜 remote camera 所需的最小权限。
+   * CAMERA 是 CameraKit 必需权限；ACCESS_BLUETOOTH 对齐华为眼镜组件的蓝牙访问授权；
+   * DISTRIBUTED_DATASYNC 是跨设备协同权限兜底，用于排除分布式设备访问缺少运行时授权导致的拒绝。
    */
   private async requestCameraPermission(): Promise<boolean> {
     const atManager = abilityAccessCtrl.createAtManager()
     try {
-      const result = await atManager.requestPermissionsFromUser(this.context, ['ohos.permission.CAMERA'])
+      const result = await atManager.requestPermissionsFromUser(this.context, [
+        'ohos.permission.CAMERA',
+        'ohos.permission.ACCESS_BLUETOOTH',
+        'ohos.permission.DISTRIBUTED_DATASYNC'
+      ])
       const cameraGranted = result.authResults.length > 0 && result.authResults[0] === 0
+      const bluetoothGranted = result.authResults.length > 1 && result.authResults[1] === 0
+      const distributedGranted = result.authResults.length > 2 && result.authResults[2] === 0
       if (!cameraGranted) {
         this.errorMessage = '需要摄像头权限才能预览眼镜画面'
+        return false
+      }
+      if (!bluetoothGranted) {
+        this.errorMessage = '需要蓝牙访问权限才能协同 AI 眼镜摄像头'
+        return false
+      }
+      if (!distributedGranted) {
+        this.errorMessage = '需要跨设备协同权限才能验证 AI 眼镜 remote camera'
         return false
       }
       this.errorMessage = ''
       return true
     } catch (error) {
-      this.errorMessage = `请求摄像头权限失败：${String(error)}`
+      this.errorMessage = `请求眼镜预览权限失败：${String(error)}`
       console.error('[GlassesPreviewUtil] requestCameraPermission failed:', error)
       return false
     }
@@ -293,12 +332,12 @@ class GlassesPreviewUtil {
    * 当前 Mate X7 只有当 AI 眼镜以分布式摄像头注册成功时，这里才会返回 CameraDevice；
    * 只有蓝牙连接但未注册 remote camera 时，会返回 null 并提示用户检查眼镜协同连接状态。
    */
-  private resolveRemoteCamera(preferredDeviceId: string): camera.CameraDevice | null {
+  private resolveRemoteCamera(preferredDeviceId: string, includeQueryMatrix: boolean): camera.CameraDevice | null {
     try {
       // 创建 CameraManager，用于查询当前系统暴露的摄像头设备。
       const cameraManager = camera.getCameraManager(this.context)
       // 只用 CAMERA_CONNECTION_REMOTE 查询 remote camera，避免误选本机摄像头。
-      const remoteCameras = this.getRemoteCamerasFromConnectionQuery(cameraManager)
+      const remoteCameras = this.getRemoteCamerasFromConnectionQuery(cameraManager, includeQueryMatrix)
 
       // 如果 remote 查询没有返回任何相机，说明当前 AI 眼镜还没有注册成 remote camera。
       if (remoteCameras.length === 0) {
@@ -357,7 +396,10 @@ class GlassesPreviewUtil {
     }
   }
 
-  private getRemoteCamerasFromConnectionQuery(cameraManager: camera.CameraManager): camera.CameraDevice[] {
+  private getRemoteCamerasFromConnectionQuery(
+    cameraManager: camera.CameraManager,
+    includeQueryMatrix: boolean
+  ): camera.CameraDevice[] {
     try {
       // 调用 HarmonyOS CameraKit 标准接口：按方向、类型、连接方式查询指定相机设备。
       const remoteCameras = cameraManager.getCameraDevices(
@@ -372,8 +414,10 @@ class GlassesPreviewUtil {
       console.info(`${AI_GLASS_LOG_PREFIX} getCameraDevices input position=BACK,type=WIDE_ANGLE,connection=REMOTE`)
       // hilog 记录 getCameraDevices 返回的完整 CameraDevice 摘要。
       this.logCameraDeviceList('getCameraDevices.remoteReturn', remoteCameras)
-      // 额外做一次 position/type 全组合枚举，排查 BACK + WIDE_ANGLE 过滤条件是否遗漏其他 AI 眼镜设备。
-      this.logRemoteCameraQueryMatrix(cameraManager)
+      if (includeQueryMatrix) {
+        // 额外做一次 position/type 全组合枚举，排查 BACK + WIDE_ANGLE 过滤条件是否遗漏其他 AI 眼镜设备。
+        this.logRemoteCameraQueryMatrix(cameraManager)
+      }
       // 把 getCameraDevices 的反参和 getSupportedCameras 的本机列表都写入诊断文本。
       this.updateCameraDiagnostics(cameraManager, remoteCameras, 'strict remote query')
       // 创建过滤后的 remote camera 列表。
@@ -415,6 +459,26 @@ class GlassesPreviewUtil {
       result.push(cameraDevice)
     }
     return result
+  }
+
+  private getSwitchablePhoneCameras(cameraManager: camera.CameraManager): camera.CameraDevice[] {
+    const phoneCameras = this.getLocalPhoneCameras(cameraManager)
+    const result: camera.CameraDevice[] = []
+
+    for (let i = 0; i < phoneCameras.length; i++) {
+      if (this.isSwitchablePhoneCamera(phoneCameras[i])) {
+        result.push(phoneCameras[i])
+      }
+    }
+    return result
+  }
+
+  private isSwitchablePhoneCamera(cameraDevice: camera.CameraDevice): boolean {
+    const isMainPosition =
+      cameraDevice.cameraPosition === camera.CameraPosition.CAMERA_POSITION_BACK ||
+        cameraDevice.cameraPosition === camera.CameraPosition.CAMERA_POSITION_FRONT ||
+        cameraDevice.cameraPosition === camera.CameraPosition.CAMERA_POSITION_FOLD_INNER
+    return isMainPosition
   }
 
   private pickPreferredPhoneCamera(cameraDevices: camera.CameraDevice[]): camera.CameraDevice {
@@ -486,6 +550,16 @@ class GlassesPreviewUtil {
     console.info('[GlassesPreviewUtil] camera diagnostics:', this.diagnosticText)
   }
 
+  private updatePhoneSwitchDiagnostics(phoneCameras: camera.CameraDevice[]): void {
+    const lines: string[] = []
+    lines.push(`phone switch candidates=${phoneCameras.length}`)
+    for (let i = 0; i < phoneCameras.length; i++) {
+      lines.push(this.describeCameraDevice('phoneSwitch', i, phoneCameras[i]))
+    }
+    this.diagnosticText = lines.join('\n')
+    console.info('[GlassesPreviewUtil] phone switch diagnostics:', this.diagnosticText)
+  }
+
   private appendSelectedCameraDiagnostic(reason: string, cameraDevice: camera.CameraDevice): void {
     // 在诊断文本末尾补充最终选中的 CameraDevice，以及选中原因。
     this.appendDiagnosticLine(`selected(${reason}): ${this.describeCameraDevice('camera', 0, cameraDevice)}`)
@@ -529,6 +603,8 @@ class GlassesPreviewUtil {
     try {
       // 监听 CameraInput error，捕捉 CameraKit 能回传到应用层的设备错误。
       cameraInput.on('error', cameraDevice, (error: BusinessError) => {
+        this.startupCameraInputErrorCode = error.code
+        this.startupCameraInputErrorMessage = error.message ?? ''
         // 打印错误码、错误消息和 cameraId。
         console.error(
           `${AI_GLASS_LOG_PREFIX} cameraInput error code=${error.code}, message=${error.message}, ` +
@@ -728,6 +804,14 @@ class GlassesPreviewUtil {
     this.diagnosticText = `${this.diagnosticText}\n${line}`
   }
 
+  private sleep(durationMs: number): Promise<void> {
+    return new Promise((resolve: () => void) => {
+      setTimeout(() => {
+        resolve()
+      }, durationMs)
+    })
+  }
+
   private maskDeviceId(deviceId: string): string {
     // cameraId 较短时不脱敏，便于开发期直接查看。
     if (deviceId.length <= 18) {
@@ -736,6 +820,16 @@ class GlassesPreviewUtil {
     }
     // 长 cameraId 只保留头尾，避免页面诊断过长挤压 UI。
     return `${deviceId.slice(0, 8)}...${deviceId.slice(deviceId.length - 10)}`
+  }
+
+  private formatError(error: Object): string {
+    const businessError = error as BusinessError
+    const code = businessError.code
+    const message = businessError.message
+    if (code !== undefined && code !== null) {
+      return `code=${code}, message=${message ?? ''}`
+    }
+    return String(error)
   }
 }
 

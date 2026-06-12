@@ -66,6 +66,28 @@
           ],
           "when": "inuse"
         }
+      },
+      // AI 眼镜通过蓝牙与手机保持连接，补充蓝牙访问权限用于排除眼镜协同链路授权问题
+      {
+        "name": "ohos.permission.ACCESS_BLUETOOTH",
+        "reason": "$string:permission_bluetooth_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      // AI 眼镜通过系统 remote camera 暴露，补充跨设备协同权限用于排除分布式访问授权问题
+      {
+        "name": "ohos.permission.DISTRIBUTED_DATASYNC",
+        "reason": "$string:permission_distributed_datasync_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
       }],
     "extensionAbilities": [
       {

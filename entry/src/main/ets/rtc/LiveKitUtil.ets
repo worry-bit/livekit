@@ -1,5 +1,6 @@
 import { abilityAccessCtrl, common } from '@kit.AbilityKit'
 import { AudioLevelInfo, createLiveKitClient, LiveKitClient, VideoCaptureOptions } from 'livekit-harmony'
+import liveKitCameraSwitchCoordinator from './LiveKitCameraSwitchCoordinator'
 import { RtcModel, SpeakerModel } from './RtcModel'
 
 /**
@@ -167,6 +168,37 @@ class LiveKitUtil {
   }
 
   /**
+   * 发布屏幕采集视频。
+   * 当前 @ohos/webrtc 没有把 AI 眼镜 remote camera 暴露成 videoinput，
+   * 所以 AI 眼镜 demo 兜底使用 CameraKit 预览 + 屏幕采集发布到 SFU。
+   */
+  async publishDisplayVideo(): Promise<boolean> {
+    if (!this.client.isConnected) {
+      this.errorMessage = 'LiveKit 房间未连接，无法发布屏幕视频'
+      console.warn('[LiveKitUtil] publishDisplayVideo called before room connected')
+      return false
+    }
+
+    try {
+      await this.client.publishDisplayVideo({
+        width: 1280,
+        height: 720,
+        frameRate: 15
+      })
+      this.isVideoPublished = true
+      this.currentVideoDeviceId = 'display:ai_glasses_preview'
+      this.errorMessage = ''
+      return true
+    } catch (error) {
+      this.isVideoPublished = false
+      this.currentVideoDeviceId = ''
+      this.errorMessage = String(error)
+      console.error('[LiveKitUtil] publishDisplayVideo failed:', error)
+      return false
+    }
+  }
+
+  /**
    * 取消发布本机摄像头视频，并释放 SDK 内部的视频轨道和本地渲染器。
    */
   async unpublishVideo(): Promise<boolean> {
@@ -190,8 +222,9 @@ class LiveKitUtil {
   }
 
   /**
-   * 不断开 SFU 房间，只替换本地视频采集源。
-   * entry 用它在“手机摄像头 <-> AI 眼镜摄像头”之间切换；如果当前还没发布视频，则退化为首次发布。
+   * 不断开 SFU 房间，只重建当前发布的视频采集源。
+   * @ohos/webrtc 的 RTCRtpSender.replaceTrack() 在 Mate X7 + remote camera 下容易卡死或 native 崩溃，
+   * 因此这里保持房间连接，按“停发视频 -> 按目标 deviceId 重新发布视频”的稳定路径切源。
    */
   async replaceVideoSource(surfaceId: string, deviceId: string = ''): Promise<boolean> {
     if (surfaceId.length === 0) {
@@ -207,12 +240,28 @@ class LiveKitUtil {
     }
 
     try {
-      await this.client.unpublishVideo()
+      const normalizedDeviceId = deviceId.trim()
+      const options = this.createVideoCaptureOptions(normalizedDeviceId)
+      console.info(
+        '[LiveKitUtil] replaceVideoSource start:',
+        this.isRemoteCameraDeviceId(normalizedDeviceId) ? 'ai_glasses' : 'phone',
+        normalizedDeviceId.length > 0 ? normalizedDeviceId : 'default'
+      )
+      await liveKitCameraSwitchCoordinator.switchPublishedVideoSource(
+        this.client,
+        surfaceId,
+        options,
+        this.isRemoteCameraDeviceId(normalizedDeviceId) ? 'ai_glasses' : 'phone'
+      )
+      this.localVideoSurfaceId = surfaceId
+      this.currentVideoDeviceId = normalizedDeviceId
+      this.isVideoPublished = true
+      this.errorMessage = ''
+      return true
+    } catch (error) {
       this.isVideoPublished = false
       this.localVideoSurfaceId = ''
       this.currentVideoDeviceId = ''
-      return this.publishVideo(surfaceId, deviceId)
-    } catch (error) {
       this.errorMessage = String(error)
       console.error('[LiveKitUtil] replaceVideoSource failed:', error)
       return false
@@ -306,16 +355,25 @@ class LiveKitUtil {
   }
 
   private createVideoCaptureOptions(deviceId: string): VideoCaptureOptions {
+    const isRemoteDevice = this.isRemoteCameraDeviceId(deviceId)
     const options: VideoCaptureOptions = {
-      width: deviceId.length > 0 ? 1280 : 640,
-      height: 720,
+      width: isRemoteDevice ? 1280 : 640,
+      height: isRemoteDevice ? 720 : 480,
       frameRate: 15
     }
     if (deviceId.length > 0) {
       options.deviceId = deviceId
-      console.info('[LiveKitUtil] publishVideo with explicit deviceId:', deviceId)
+      if (isRemoteDevice) {
+        console.info('[LiveKitUtil] publishVideo with AI glasses remote deviceId:', deviceId)
+      } else {
+        console.info('[LiveKitUtil] publishVideo with selected phone deviceId:', deviceId)
+      }
     }
     return options
+  }
+
+  private isRemoteCameraDeviceId(deviceId: string): boolean {
+    return deviceId.indexOf('__Camera_') >= 0
   }
 
   /**

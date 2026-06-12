@@ -10,7 +10,7 @@
     },
     {
       "name": "EntryAbility_label",
-      "value": "label"
+      "value": "LiveKit直播Demo"
     },
     {
       "name": "Internet_reason",
@@ -23,6 +23,18 @@
     {
       "name": "permission_camera_reason",
       "value": "需要使用摄像头进行视频通话"
+    },
+    {
+      "name": "permission_bluetooth_reason",
+      "value": "需要访问蓝牙连接以协同 AI 眼镜摄像头"
+    },
+    {
+      "name": "permission_distributed_datasync_reason",
+      "value": "需要访问跨设备协同能力以连接 AI 眼镜摄像头"
+    },
+    {
+      "name": "permission_screen_capture_reason",
+      "value": "需要采集屏幕用于发布眼镜预览画面"
     }
   ]
 }

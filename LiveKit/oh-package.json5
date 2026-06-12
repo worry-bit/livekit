@@ -17,7 +17,7 @@
     "rtc"
   ],
   "dependencies": {
-    "@ohos/webrtc": "^1.0.1",
+    "@ohos/webrtc": "file:/tmp/ohos-webrtc-102rc1-inspect/webrtc-1.0.2-rc1.har",
     "protobufjs": "^7.2.4"
   }
 }

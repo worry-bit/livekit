@@ -119,6 +119,28 @@ export class KooUserMedia {
   }
 
   /**
+   * 强制释放当前共享摄像头轨道，不等待引用计数归零。
+   * AI 眼镜 remote camera 切源前必须彻底让出 Mate X7 本机摄像头，否则 @ohos/webrtc
+   * 可能继续复用或回退到已经打开的手机摄像头，导致页面看起来“推了 AI 眼镜”，实际仍是手机画面。
+   */
+  static forceReleaseSharedVideoTrack(reason: string): void {
+    const capture = KooUserMedia.sharedCameraCapture
+    if (!capture) {
+      console.info('[KooUserMedia] No shared camera to force release:', reason)
+      return
+    }
+
+    try {
+      capture.track.stop()
+      console.info('[KooUserMedia] Shared camera force released:', reason)
+    } catch (error) {
+      console.error('[KooUserMedia] force release shared camera failed:', String(error))
+    } finally {
+      KooUserMedia.sharedCameraCapture = null
+    }
+  }
+
+  /**
    * 开启摄像头（对应 H5 UserMedia.openCamera）
    * @param cameraId 0=后摄, 1=前摄
    * @param width  请求宽度（像素）
@@ -139,7 +161,11 @@ export class KooUserMedia {
       return false
     }
     if (this.cameraOn && this.cameraId === cameraId) {
-      return true
+      if (this.videoTrack && this.videoTrack.readyState !== 'ended') {
+        return true
+      }
+      console.warn('[KooUserMedia] Camera state is on but track ended, reset before reopen')
+      await this.stopCamera()
     }
 
     this.cameraOpening = true
@@ -238,6 +264,8 @@ export class KooUserMedia {
   private async stopCamera(): Promise<void> {
     if (this.retainedSharedTrack) {
       KooUserMedia.releaseSharedVideoTrack(this.retainedSharedTrack)
+    } else if (this.videoTrack) {
+      this.videoTrack.stop()
     }
     this.retainedSharedTrack = null
     this.videoTrack = null

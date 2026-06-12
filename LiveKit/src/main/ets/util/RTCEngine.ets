@@ -72,7 +72,8 @@ export class RTCEngine {
 
   // 本地视频
   private videoSource: webrtc.VideoSource | null = null
-  private videoTrack: webrtc.VideoTrack | null = null
+  private videoTrack: webrtc.MediaStreamTrack | null = null
+  private remoteVideoStream: webrtc.MediaStream | null = null
   private localRenderer: webrtc.NativeVideoRenderer | null = null
   private retainedSharedVideoTrack: webrtc.VideoTrack | null = null
   private currentFacingMode: string = 'environment'
@@ -246,7 +247,14 @@ export class RTCEngine {
       const facingMode = options?.facingMode ?? 'user'
       const deviceId = options?.deviceId?.trim() ?? ''
       const hasExplicitDevice = deviceId.length > 0
+      const isRemoteDevice = this.isRemoteCameraDeviceId(deviceId)
       this.currentFacingMode = facingMode
+
+      if (isRemoteDevice) {
+        KooUserMedia.forceReleaseSharedVideoTrack(
+          `publish remote camera ${this.maskCameraDeviceId(deviceId)}`
+        )
+      }
 
       const sharedTrack = KooUserMedia.getSharedVideoTrack()
       if (!hasExplicitDevice && sharedTrack && KooUserMedia.retainSharedVideoTrack(sharedTrack)) {
@@ -254,16 +262,35 @@ export class RTCEngine {
         this.videoSource = null
         this.retainedSharedVideoTrack = sharedTrack
         console.info('[RTCEngine] Reusing shared camera track:', sharedTrack.id)
+      } else if (hasExplicitDevice) {
+        const constraints: webrtc.MediaTrackConstraints = this.buildVideoConstraints(width, height, frameRate, deviceId)
+        this.videoTrack = await this.createMediaDevicesVideoTrack(constraints, deviceId)
+        this.videoSource = null
+        this.retainedSharedVideoTrack = null
+        console.info('[RTCEngine] Explicit camera track created by MediaDevices.getUserMedia')
       } else {
-        // 创建 VideoSource 时只传基础采集约束，避免触发 Mate X7 上的相机方向查询崩溃路径。
-        // 如果 KooPhone 已经打开摄像头，上面的 sharedTrack 分支会直接复用，避免同时打开两路相机。
         const constraints: webrtc.MediaTrackConstraints = this.buildVideoConstraints(width, height, frameRate, deviceId)
         this.videoSource = this.peerConnectionFactory.createVideoSource(constraints)
+        const targetLabel = this.describeVideoSourceTarget(deviceId)
+        this.videoSource.oncapturerstarted = (event: webrtc.VideoCapturerStartedEvent) => {
+          console.info(
+            `[RTCEngine] Video capturer started target=${targetLabel}, ` +
+              `success=${event.success ? 'true' : 'false'}`
+          )
+        }
+        this.videoSource.oncapturerstopped = () => {
+          console.info(`[RTCEngine] Video capturer stopped target=${targetLabel}`)
+        }
         const localTrackId = `video_${Date.now()}`
         this.videoTrack = this.peerConnectionFactory.createVideoTrack(localTrackId, this.videoSource)
-        KooUserMedia.registerSharedVideoTrack(this.videoTrack, this.videoSource)
-        KooUserMedia.retainSharedVideoTrack(this.videoTrack)
-        this.retainedSharedVideoTrack = this.videoTrack
+        if (!isRemoteDevice) {
+          KooUserMedia.registerSharedVideoTrack(this.videoTrack, this.videoSource)
+          KooUserMedia.retainSharedVideoTrack(this.videoTrack)
+          this.retainedSharedVideoTrack = this.videoTrack
+        } else {
+          this.retainedSharedVideoTrack = null
+          console.info('[RTCEngine] Remote camera track is isolated from KooUserMedia shared track')
+        }
         console.info('[RTCEngine] VideoSource created, capturing started')
       }
 
@@ -285,6 +312,61 @@ export class RTCEngine {
     } catch (error) {
       this.releaseRetainedVideoTrack()
       console.error('[RTCEngine] Publish video failed:', error)
+      throw new Error(String(error))
+    }
+  }
+
+  /**
+   * 发布屏幕采集视频。
+   *
+   * 这是 AI 眼镜 demo 的兜底路径：entry 先用 CameraKit 把眼镜画面渲染到页面，
+   * SDK 再发布屏幕采集 Track。它不是纯摄像头轨道，只用于验证端到端效果。
+   */
+  async publishDisplayVideo(options?: VideoCaptureOptions): Promise<void> {
+    if (!this.peerConnectionFactory || !this.publisherPC) {
+      throw new Error('PeerConnectionFactory not initialized')
+    }
+    if (this.videoTrack) {
+      console.warn('[RTCEngine] Video already published')
+      return
+    }
+
+    try {
+      const peerConnectionFactory = this.peerConnectionFactory
+      const width = options?.width ?? 1280
+      const height = options?.height ?? 720
+      const constraints: webrtc.MediaTrackConstraints = {
+        width: Math.max(1, Math.floor(width)),
+        height: Math.max(1, Math.floor(height)),
+        ohosScreenCaptureMode: 'home-screen',
+        ohosScreenCaptureAutoRotation: true
+      }
+      console.info('[RTCEngine] Create screencast VideoSource for display fallback:', width, height)
+
+      this.releaseRemoteVideoStream()
+      const displaySource = peerConnectionFactory.createVideoSource(constraints, true)
+      displaySource.oncapturerstarted = (event: webrtc.VideoCapturerStartedEvent) => {
+        console.info(`[RTCEngine] Screencast capturer started, success=${event.success ? 'true' : 'false'}`)
+      }
+      displaySource.oncapturerstopped = () => {
+        console.info('[RTCEngine] Screencast capturer stopped')
+      }
+
+      const trackId = `display_${Date.now()}`
+      const displayTrack = peerConnectionFactory.createVideoTrack(trackId, displaySource)
+      this.videoSource = displaySource
+      this.videoTrack = displayTrack
+      this.retainedSharedVideoTrack = null
+
+      // LiveKit 侧仍按 camera source 上报，便于 demo 端按原摄像头轨道消费；实际采集源是屏幕兜底。
+      this.signalClient.sendAddTrack(trackId, 'video', 1, 1)
+      console.info('[RTCEngine] Sent AddTrackRequest for display video:', trackId)
+
+      this.publisherPC.addTrack(this.videoTrack)
+      console.info('[RTCEngine] Display video track added:', trackId)
+    } catch (error) {
+      this.releaseRetainedVideoTrack()
+      console.error('[RTCEngine] Publish display video failed:', error)
       throw new Error(String(error))
     }
   }
@@ -694,10 +776,15 @@ export class RTCEngine {
       const audioManager = audio.getAudioManager()
       const routingManager = audioManager.getRoutingManager()
 
-      // CommunicationDeviceType: SPEAKER = 2
-      const deviceType = enable ? audio.CommunicationDeviceType.SPEAKER : 0
-      await routingManager.setCommunicationDevice(deviceType, enable)
-      console.info('[RTCEngine] Set communication device to:', enable ? 'SPEAKER' : 'DEFAULT')
+      // HarmonyOS 当前公开的 CommunicationDeviceType 只有 SPEAKER=2。
+      // 真机日志显示传 0 关闭外放会触发 native napi_string 断言，因此关闭时只交还系统默认路由。
+      if (!enable) {
+        console.info('[RTCEngine] Skip forcing communication device, keep system default route')
+        return
+      }
+
+      await routingManager.setCommunicationDevice(audio.CommunicationDeviceType.SPEAKER, true)
+      console.info('[RTCEngine] Set communication device to: SPEAKER')
     } catch (error) {
       console.error('[RTCEngine] enableSpeakerphone error:', error)
     }
@@ -882,9 +969,96 @@ export class RTCEngine {
     } else if (this.videoTrack) {
       this.videoTrack.stop()
     }
+    this.releaseRemoteVideoStream()
+    if (!this.retainedSharedVideoTrack && this.videoSource) {
+      this.videoSource.release()
+    }
     this.retainedSharedVideoTrack = null
     this.videoTrack = null
     this.videoSource = null
+  }
+
+  private async createMediaDevicesVideoTrack(
+    constraints: webrtc.MediaTrackConstraints,
+    deviceId: string
+  ): Promise<webrtc.MediaStreamTrack> {
+    this.releaseRemoteVideoStream()
+
+    const mediaDevices = new webrtc.MediaDevices()
+    const targetLabel = this.describeVideoSourceTarget(deviceId)
+    console.info('[RTCEngine] Request camera by MediaDevices.getUserMedia:', targetLabel)
+    const isRemoteDevice = this.isRemoteCameraDeviceId(deviceId)
+    const webRtcHasExpectedRemoteCamera = await this.logWebRtcMediaDevicesForRemoteCamera(mediaDevices, deviceId)
+    if (isRemoteDevice && !webRtcHasExpectedRemoteCamera) {
+      throw new Error(
+        '当前 @ohos/webrtc 未暴露 AI 眼镜 remote camera，不能通过 LiveKit 直接发布眼镜视频；' +
+          '已停止推流，避免回退到手机摄像头或录屏'
+      )
+    }
+
+    const stream = await mediaDevices.getUserMedia({
+      video: constraints,
+      audio: false
+    })
+    const tracks = stream.getVideoTracks()
+    if (tracks.length === 0) {
+      this.stopMediaStreamTracks(stream)
+      throw new Error('Camera getUserMedia returned no video track')
+    }
+
+    this.remoteVideoStream = stream
+    console.info('[RTCEngine] Camera getUserMedia video track:', tracks[0].id)
+    console.info('[RTCEngine] Camera track source state:', tracks[0].getSource()?.state ?? 'unknown')
+    return tracks[0]
+  }
+
+  private async logWebRtcMediaDevicesForRemoteCamera(
+    mediaDevices: webrtc.MediaDevices,
+    expectedDeviceId: string
+  ): Promise<boolean> {
+    let hasExpectedDevice = false
+    try {
+      const devices = await mediaDevices.enumerateDevices()
+      console.info('[RTCEngine] WebRTC enumerateDevices count:', devices.length)
+      for (let i = 0; i < devices.length; i++) {
+        const device = devices[i]
+        const deviceId = device.deviceId ?? ''
+        console.info(
+          `[RTCEngine] WebRTC device[${i}] ` +
+            `kind=${String(device.kind)}, ` +
+            `label=${device.label ?? ''}, ` +
+            `deviceId=${this.maskCameraDeviceId(deviceId)}, ` +
+            `groupId=${this.maskCameraDeviceId(device.groupId ?? '')}, ` +
+            `matchesCameraKitRemote=${deviceId === expectedDeviceId ? 'true' : 'false'}`
+        )
+        if (deviceId === expectedDeviceId) {
+          hasExpectedDevice = true
+        }
+      }
+    } catch (error) {
+      console.warn('[RTCEngine] WebRTC enumerateDevices failed before remote camera open:', String(error))
+    }
+    return hasExpectedDevice
+  }
+
+  private releaseRemoteVideoStream(): void {
+    if (!this.remoteVideoStream) {
+      return
+    }
+
+    this.stopMediaStreamTracks(this.remoteVideoStream)
+    this.remoteVideoStream = null
+  }
+
+  private stopMediaStreamTracks(stream: webrtc.MediaStream): void {
+    const tracks = stream.getTracks()
+    for (let i = 0; i < tracks.length; i++) {
+      try {
+        tracks[i].stop()
+      } catch (error) {
+        console.warn('[RTCEngine] stop media stream track skipped:', String(error))
+      }
+    }
   }
 
   private buildVideoConstraints(
@@ -897,15 +1071,37 @@ export class RTCEngine {
     const constraints: webrtc.MediaTrackConstraints = {
       width: Math.max(1, Math.floor(width)),
       height: Math.max(1, Math.floor(height)),
-      frameRate: {
-        min: safeFrameRate,
-        max: Math.max(safeFrameRate, 30)
-      }
+      frameRate: safeFrameRate
     }
     if (deviceId.length > 0) {
       constraints.deviceId = deviceId
-      console.info('[RTCEngine] Using explicit video deviceId for publishVideo:', deviceId)
+      console.info(
+        '[RTCEngine] Using explicit video deviceId for publishVideo:',
+        this.isRemoteCameraDeviceId(deviceId) ? `ai_glasses:${this.maskCameraDeviceId(deviceId)}` : deviceId
+      )
     }
     return constraints
   }
+
+  private isRemoteCameraDeviceId(deviceId: string): boolean {
+    return deviceId.indexOf('__Camera_') >= 0
+  }
+
+  private describeVideoSourceTarget(deviceId: string): string {
+    if (deviceId.length === 0) {
+      return 'default'
+    }
+    if (this.isRemoteCameraDeviceId(deviceId)) {
+      return `ai_glasses:${this.maskCameraDeviceId(deviceId)}`
+    }
+    return `phone:${this.maskCameraDeviceId(deviceId)}`
+  }
+
+  private maskCameraDeviceId(deviceId: string): string {
+    if (deviceId.length <= 12) {
+      return deviceId
+    }
+    return `${deviceId.substring(0, 6)}...${deviceId.substring(deviceId.length - 6)}`
+  }
+
 }

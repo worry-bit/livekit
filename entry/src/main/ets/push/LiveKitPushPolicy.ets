@@ -26,27 +26,46 @@ function isFilledLiveKitValue(value: string): boolean {
 /**
  * 全局推流按钮文案。canStop=false 时保留推流能力，但隐藏关闭入口。
  */
-export function getLiveKitPushButtonText(isPublished: boolean, isBusy: boolean, canStop: boolean = true): string {
+export function getLiveKitPushButtonText(
+  isPublished: boolean,
+  isBusy: boolean,
+  canStop: boolean = true,
+  cameraSource: LiveKitCameraSource = LIVEKIT_CAMERA_SOURCE_PHONE
+): string {
   if (isBusy) {
+    if (isPublished && !canStop) {
+      return cameraSource === LIVEKIT_CAMERA_SOURCE_AI_GLASSES ? '切回手机中...' : '切换中...'
+    }
     return isPublished ? '关闭中...' : '推流中...'
   }
   if (!isPublished) {
     return '开始直播推流'
   }
-  return canStop ? '关闭直播推流' : '直播推流中'
+  if (canStop) {
+    return '关闭直播推流'
+  }
+  return cameraSource === LIVEKIT_CAMERA_SOURCE_AI_GLASSES ? '推送手机视频流' : '手机视频流推送中'
 }
 
 /**
  * 全局推流按钮颜色：开始为绿色，关闭为红色，过渡态或关闭入口禁用时置灰。
  */
-export function getLiveKitPushButtonColor(isPublished: boolean, isBusy: boolean, canStop: boolean = true): string {
+export function getLiveKitPushButtonColor(
+  isPublished: boolean,
+  isBusy: boolean,
+  canStop: boolean = true,
+  cameraSource: LiveKitCameraSource = LIVEKIT_CAMERA_SOURCE_PHONE
+): string {
   if (isBusy) {
     return LIVEKIT_PUSH_DISABLED
   }
   if (!isPublished) {
     return LIVEKIT_PUSH_GREEN
   }
-  return canStop ? LIVEKIT_PUSH_RED : LIVEKIT_PUSH_DISABLED
+  if (canStop) {
+    return LIVEKIT_PUSH_RED
+  }
+  return cameraSource === LIVEKIT_CAMERA_SOURCE_AI_GLASSES ? LIVEKIT_PUSH_GREEN : LIVEKIT_PUSH_DISABLED
 }
 
 /**
@@ -60,11 +79,19 @@ export function canToggleLiveKitPush(isSurfaceReady: boolean, isBusy: boolean): 
  * 推流按钮是否允许响应点击。关闭推流不依赖 preview surface；开始推流时页面会再做 surface 校验。
  * 这个策略避免关闭后 XComponent 尚未重新 onLoad 时，按钮长期处于灰色不可点状态。
  */
-export function canClickLiveKitPushButton(isBusy: boolean, isPublished: boolean = false, canStop: boolean = true): boolean {
+export function canClickLiveKitPushButton(
+  isBusy: boolean,
+  isPublished: boolean = false,
+  canStop: boolean = true,
+  cameraSource: LiveKitCameraSource = LIVEKIT_CAMERA_SOURCE_PHONE
+): boolean {
   if (isBusy) {
     return false
   }
-  return !isPublished || canStop
+  if (!isPublished || canStop) {
+    return true
+  }
+  return cameraSource === LIVEKIT_CAMERA_SOURCE_AI_GLASSES
 }
 
 /**
@@ -78,8 +105,24 @@ export function canSwitchPhoneCamera(isPublished: boolean, isBusy: boolean, came
 /**
  * AI 眼镜源切换只要求当前没有异步操作；未推流时点击表示预选眼镜源，推流中点击表示替换视频轨道。
  */
-export function canSwitchAiGlassesCamera(isBusy: boolean): boolean {
-  return !isBusy
+export function canSwitchAiGlassesCamera(
+  isBusy: boolean,
+  isPublished: boolean = false,
+  cameraSource: LiveKitCameraSource = LIVEKIT_CAMERA_SOURCE_PHONE
+): boolean {
+  return !isBusy && !(isPublished && cameraSource === LIVEKIT_CAMERA_SOURCE_AI_GLASSES)
+}
+
+/**
+ * 本机/眼镜预览 surface 只在准备推流、正在推流或推流切换中挂载。
+ * 初始选择页只保留控制按钮，避免还没点“开始直播推流”就出现黑色预览块。
+ */
+export function shouldRenderLiveKitPreviewSurface(
+  isPreviewVisible: boolean,
+  isPublished: boolean,
+  isBusy: boolean
+): boolean {
+  return isPreviewVisible || isPublished || isBusy
 }
 
 /**

@@ -283,6 +283,33 @@ export class LiveKitClient implements RTCEngineDelegate {
   }
 
   /**
+   * 发布屏幕采集视频。
+   * AI 眼镜 demo 兜底链路会先由 entry 使用 CameraKit 渲染眼镜预览，
+   * 再通过 SDK 的屏幕采集 VideoSource 发布到 LiveKit SFU。
+   */
+  async publishDisplayVideo(options?: VideoCaptureOptions): Promise<void> {
+    if (!this.isConnected) {
+      throw new Error('Not connected to room')
+    }
+
+    if (this.isVideoPublished) {
+      console.warn('[LiveKitClient] Video already published')
+      return
+    }
+
+    try {
+      await this.rtcEngine.publishDisplayVideo(options)
+      this.isVideoPublished = true
+
+      console.info('[LiveKitClient] Display video published')
+      this.emit('trackPublished', { kind: 'video' })
+    } catch (error) {
+      console.error('[LiveKitClient] Publish display video failed:', error)
+      throw new Error(String(error))
+    }
+  }
+
+  /**
    * 取消发布本地视频
    */
   async unpublishVideo(): Promise<void> {
